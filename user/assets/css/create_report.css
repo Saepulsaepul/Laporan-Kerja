@@ -1,0 +1,89 @@
+:root {
+    --primary-color: #0d6efd;
+    --secondary-color: #6c757d;
+    --success-color: #198754;
+    --background-light: #f8f9fa;
+    --background-gradient: linear-gradient(to top, #e7f0fd 0%, #f8f9fa 100%);
+    --card-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+body {
+    background-color: var(--background-light);
+    background-image: var(--background-gradient);
+    font-family: 'Poppins', sans-serif;
+    min-height: 100vh;
+}
+
+.navbar-custom {
+    background-color: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.navbar-brand {
+    font-weight: 600;
+    color: var(--primary-color) !important;
+}
+.avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background-color: var(--primary-color);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+}
+
+.main-card {
+    border: none;
+    border-radius: 16px;
+    box-shadow: var(--card-shadow);
+    background-color: #fff;
+}
+.card-body {
+    padding: 2rem 2.5rem;
+}
+
+.form-label {
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+.form-step {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+.form-control, .form-select {
+    padding: 0.8rem 1.1rem;
+    font-size: 1rem;
+    border-radius: 8px;
+}
+.form-control:focus, .form-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+}
+.form-control[readonly] {
+    background-color: #e9ecef;
+    cursor: not-allowed;
+}
+
+.upload-area {
+    border: 2px dashed #dee2e6;
+    padding: 1.5rem;
+    border-radius: 12px;
+    background-color: #fafafa;
+    text-align: center;
+}
+#imagePreview img {
+    max-width: 100%;
+    max-height: 350px;
+    border-radius: 8px;
+}
+.wizard-steps {
+    text-align: center;
+    padding: 1rem;
+    background-color: #e9ecef;
+    border-radius: 8px;
+    font-weight: 500;
+    color: var(--secondary-color);
+}

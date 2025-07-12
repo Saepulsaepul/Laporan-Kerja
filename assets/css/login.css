@@ -1,0 +1,144 @@
+:root {
+            --primary-color: #0d6efd;
+            --primary-darker: #0b5ed7;
+            --background-color: #f0f2f5;
+            --card-background: #ffffff;
+            --text-color: #495057;
+            --heading-color: #212529;
+        }
+
+        /* --- GANTI DENGAN BLOK INI --- */
+        body {
+            min-height: 100vh; /* Menggunakan vh (viewport height) agar lebih andal */
+            background-color: var(--background-color);
+            background-image: linear-gradient(to top, #accbee 0%, #e7f0fd 100%);
+            font-family: 'Poppins', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem 1rem; 
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 480px;
+        }
+        
+        .login-card {
+            background-color: var(--card-background);
+            border: none;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            position: relative;
+        }
+
+        .login-card-header {
+            text-align: center;
+            padding: 2.5rem 1.5rem;
+            background: linear-gradient(135deg, var(--primary-color), var(--primary-darker));
+            color: white;
+        }
+        
+        /* --- PERUBAHAN CSS DI SINI --- */
+        .logo-placeholder {
+            width: auto;
+            max-width: 120px; 
+            height: auto;
+            margin-bottom: 1.25rem;
+            margin-left: auto;   /* Tambahkan baris ini */
+            margin-right: auto;  /* Tambahkan baris ini */
+        }
+        
+        .logo-placeholder img {
+            /* Menghapus border-radius agar gambar tidak dipaksa bulat */
+            max-width: 100%;
+            height: auto;
+        }
+        /* --- AKHIR PERUBAHAN CSS --- */
+
+        .header-title {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0;
+            line-height: 1.2;
+        }
+        
+        .header-subtitle {
+            font-size: 1.2rem;
+            font-weight: 500;
+            color: rgba(255, 255, 255, 0.95);
+            margin-bottom: 0.5rem;
+        }
+
+        .header-system-title {
+            font-size: 1rem;
+            font-weight: 400;
+            opacity: 0.9;
+        }
+
+        .admin-login-btn {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            font-weight: 500;
+            border-radius: 20px;
+            padding: 0.4rem 0.8rem;
+            font-size: 0.8rem;
+        }
+        .admin-login-btn:hover {
+            background-color: rgba(255,255,255,0.3);
+            color: white;
+        }
+
+        .login-card-body {
+            padding: 2rem 2.5rem;
+        }
+
+        .form-label {
+            font-weight: 600;
+            color: var(--heading-color);
+            margin-bottom: 0.5rem;
+        }
+        .form-label i {
+            margin-right: 8px;
+            width: 16px;
+        }
+        
+        .form-control-lg {
+            font-size: 1rem;
+            padding: 0.9rem 1.2rem;
+            border-radius: 8px;
+        }
+        .form-control-lg:focus {
+             box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+             border-color: var(--primary-color);
+        }
+
+        .input-group-text {
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            padding: 0.9rem 1.5rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        
+        .footer-text {
+            font-size: 0.85rem;
+            text-align: center;
+            padding: 1.5rem 1rem;
+            color: #6c757d;
+        }
+        
+        .modal-header {
+            background-color: #343a40;
+            color: white;
+        }
+        .modal-header .btn-close {
+            filter: invert(1) grayscale(100%) brightness(200%);
+        }
