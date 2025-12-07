@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Website Pelaporan dan Rekap Data
 
 Website sistem pelaporan dan rekap data yang dibangun dengan PHP, MySQL, dan Bootstrap. Sistem ini memungkinkan pekerja untuk membuat laporan dan admin untuk mengelola data serta mengekspor rekap dalam format PDF.
@@ -183,3 +184,7 @@ website-pelaporan/
 
 Untuk pertanyaan atau bantuan, silakan hubungi administrator sistem.
 
+=======
+# Laporan-Kerja
+laporan kerja untuk report pengawasan pekerja lapangan untuk melaporkan pekerjaan yang sudah selesai di kerjakan di aplikasi ini 
+>>>>>>> 48013fe8eeedadd239427309eafdc189a7bf9182
