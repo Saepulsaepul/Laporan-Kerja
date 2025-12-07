@@ -22,7 +22,7 @@ $service_id  = isset($_REQUEST['service_id']) && $_REQUEST['service_id'] !== '' 
 $worker_id   = isset($_REQUEST['worker_id']) && $_REQUEST['worker_id'] !== '' ? (int)$_REQUEST['worker_id'] : null;
 $action      = isset($_REQUEST['action']) ? $_REQUEST['action'] : 'pdf';
 $report_type = isset($_REQUEST['report_type']) ? $_REQUEST['report_type'] : 'all';
-$show_photos = isset($_REQUEST['show_photos']) ? $_REQUEST['show_photos'] : false;
+$show_photos = isset($_REQUEST['show_photos']) && $_REQUEST['show_photos'] == '1' ? true : false;
 
 // Validasi input
 if ($start_date && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $start_date)) {
@@ -168,6 +168,79 @@ foreach ($reports as $report) {
 }
 
 // ===================================================================
+// --- FUNGSI UNTUK MENAMPILKAN FOTO ---
+// ===================================================================
+function addPhotoToPDF($pdf, $photoPath, $caption, $x, $y) {
+    $maxWidth = 80; // mm
+    $maxHeight = 40; // mm
+    
+    // Simpan posisi Y awal
+    $startY = $y;
+    
+    // Gambar border untuk foto
+    $pdf->SetDrawColor(150, 150, 150);
+    $pdf->SetLineWidth(0.3);
+    $pdf->Rect($x, $y, $maxWidth, $maxHeight + 5);
+    
+    // Coba tambahkan foto
+    try {
+        if (file_exists($photoPath)) {
+            // Dapatkan dimensi gambar
+            $imageInfo = getimagesize($photoPath);
+            if ($imageInfo !== false) {
+                $width = $imageInfo[0];
+                $height = $imageInfo[1];
+                
+                // Hitung rasio untuk fitting
+                $widthRatio = $maxWidth / $width;
+                $heightRatio = ($maxHeight - 5) / $height;
+                $ratio = min($widthRatio, $heightRatio);
+                
+                $newWidth = $width * $ratio;
+                $newHeight = $height * $ratio;
+                
+                // Hitung posisi tengah
+                $xPos = $x + ($maxWidth - $newWidth) / 2;
+                $yPos = $y + 2;
+                
+                // Tambahkan gambar
+                $pdf->Image($photoPath, $xPos, $yPos, $newWidth, $newHeight, '', '', '', false, 300, '', false, false, 0, false, false, false);
+            } else {
+                // Jika tidak bisa mendapatkan info gambar
+                $pdf->SetFont('helvetica', 'I', 8);
+                $pdf->SetTextColor(150, 150, 150);
+                $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
+                $pdf->Cell($maxWidth, 10, 'Gambar tidak\nterbaca', 0, 0, 'C');
+                $pdf->SetTextColor(0, 0, 0);
+            }
+        } else {
+            // Jika file tidak ditemukan
+            $pdf->SetFont('helvetica', 'I', 8);
+            $pdf->SetTextColor(150, 150, 150);
+            $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
+            $pdf->Cell($maxWidth, 10, 'File tidak\nditemukan', 0, 0, 'C');
+            $pdf->SetTextColor(0, 0, 0);
+        }
+    } catch (Exception $e) {
+        // Jika error saat menambahkan gambar
+        $pdf->SetFont('helvetica', 'I', 8);
+        $pdf->SetTextColor(150, 150, 150);
+        $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
+        $pdf->Cell($maxWidth, 10, 'Error: ' . substr($e->getMessage(), 0, 20), 0, 0, 'C');
+        $pdf->SetTextColor(0, 0, 0);
+    }
+    
+    // Tambahkan caption
+    $pdf->SetFont('helvetica', 'B', 8);
+    $pdf->SetTextColor(0, 0, 0);
+    $pdf->SetXY($x, $y + $maxHeight - 3);
+    $pdf->Cell($maxWidth, 5, $caption, 0, 0, 'C');
+    
+    // Kembalikan posisi Y ke awal
+    $pdf->SetY($startY);
+}
+
+// ===================================================================
 // --- FUNGSI untuk Export Excel ---
 // ===================================================================
 if ($action === 'excel') {
@@ -272,7 +345,7 @@ if ($action === 'excel') {
                 echo '<td class="photo-cell">';
                 if (!empty($report['foto_bukti'])) {
                     $photo_path = '../assets/uploads/' . $report['foto_bukti'];
-                    echo '<span class="photo-icon"><i class="fas fa-image"></i> Ada</span>';
+                    echo '<span class="photo-icon">✓ Ada</span>';
                 } else {
                     echo '-';
                 }
@@ -282,7 +355,7 @@ if ($action === 'excel') {
                 echo '<td class="photo-cell">';
                 if (!empty($report['foto_sebelum'])) {
                     $photo_path = '../assets/uploads/' . $report['foto_sebelum'];
-                    echo '<span class="photo-icon"><i class="fas fa-image"></i> Ada</span>';
+                    echo '<span class="photo-icon">✓ Ada</span>';
                 } else {
                     echo '-';
                 }
@@ -292,7 +365,7 @@ if ($action === 'excel') {
                 echo '<td class="photo-cell">';
                 if (!empty($report['foto_sesudah'])) {
                     $photo_path = '../assets/uploads/' . $report['foto_sesudah'];
-                    echo '<span class="photo-icon"><i class="fas fa-image"></i> Ada</span>';
+                    echo '<span class="photo-icon">✓ Ada</span>';
                 } else {
                     echo '-';
                 }
@@ -383,7 +456,11 @@ $pdf->Ln(8);
 // 3. JUDUL LAPORAN DAN INFORMASI FILTER
 // -----------------------------------------------------------------
 $pdf->SetFont('helvetica', 'BU', 14);
-$pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL DENGAN FOTO', 0, 1, 'C');
+if ($show_photos) {
+    $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL DENGAN FOTO', 0, 1, 'C');
+} else {
+    $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL', 0, 1, 'C');
+}
 $pdf->SetFont('helvetica', '', 10);
 
 $filterInfo = "Periode: " . ($start_date ? formatTanggalIndonesia($start_date) : 'Awal') . " s/d " . ($end_date ? formatTanggalIndonesia($end_date) : 'Akhir');
@@ -406,7 +483,7 @@ if (!empty($additionalInfo)) {
 $pdf->Ln(5);
 
 // ===================================================================
-// --- BAGIAN LAPORAN DENGAN FOTO ---
+// --- BAGIAN LAPORAN ---
 // ===================================================================
 if (!empty($reportsByService)) {
     $total_pendapatan = 0;
@@ -428,122 +505,225 @@ if (!empty($reportsByService)) {
         $pdf->Cell(0, 5, 'Jumlah Pekerjaan: ' . $total_layanan . ' | Harga per Layanan: Rp ' . number_format($serviceData['service_harga'], 0, ',', '.') . ' | Total Pendapatan: Rp ' . number_format($pendapatan_layanan, 0, ',', '.'), 0, 1, 'L');
         $pdf->Ln(3);
         
-        $no = 1;
-        foreach ($serviceData['reports'] as $report) {
-            // Cek jika perlu halaman baru
-            if ($pdf->GetY() > ($pdf->getPageHeight() - 80)) {
-                $pdf->AddPage();
+        if ($show_photos) {
+            // Mode dengan foto - tampilkan per laporan dengan detail lengkap
+            $no = 1;
+            foreach ($serviceData['reports'] as $report) {
+                // Cek jika perlu halaman baru
+                if ($pdf->GetY() > ($pdf->getPageHeight() - 100)) {
+                    $pdf->AddPage();
+                }
+                
+                // Header Laporan
+                $pdf->SetFont('helvetica', 'B', 10);
+                $pdf->SetFillColor(240, 240, 240);
+                $pdf->Cell(0, 7, 'Laporan #' . $no++ . ' - ' . htmlspecialchars($report['kode_laporan'] ?? 'N/A'), 0, 1, 'L', true);
+                $pdf->SetFont('helvetica', '', 9);
+                
+                // Informasi Laporan
+                $infoY = $pdf->GetY();
+                
+                // Kolom kiri - Informasi dasar
+                $pdf->SetXY(15, $infoY);
+                $pdf->MultiCell(80, 5, 
+                    "Tanggal Laporan: " . formatTanggalIndonesia($report['tanggal_pelaporan']) . "\n" .
+                    "Jam: " . ($report['jam_mulai'] ?? '-') . " - " . ($report['jam_selesai'] ?? '-') . "\n" .
+                    "Perusahaan: " . htmlspecialchars($report['nama_perusahaan'] ?? 'N/A') . "\n" .
+                    "Customer: " . htmlspecialchars($report['nama_customer'] ?? 'N/A') . "\n" .
+                    "Pekerja: " . htmlspecialchars($report['pekerja_nama'] ?? 'N/A') . "\n" .
+                    "Jabatan: " . htmlspecialchars($report['pekerja_jabatan'] ?? 'N/A')
+                , 0, 'L');
+                
+                // Kolom kanan - Informasi tambahan
+                $pdf->SetXY(105, $infoY);
+                $pdf->MultiCell(80, 5, 
+                    "Jadwal: " . ($report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) : 'N/A') . "\n" .
+                    "Jam Jadwal: " . ($report['jadwal_jam'] ?? '-') . "\n" .
+                    "Lokasi: " . htmlspecialchars($report['jadwal_lokasi'] ?? 'N/A') . "\n" .
+                    "Prioritas: " . htmlspecialchars($report['prioritas'] ?? 'N/A') . "\n" .
+                    "Status: " . htmlspecialchars($report['jadwal_status'] ?? 'N/A') . "\n" .
+                    "Rating: " . ($report['rating_customer'] ? str_repeat('★', $report['rating_customer']) . ' (' . $report['rating_customer'] . '/5)' : '-')
+                , 0, 'L');
+                
+                $pdf->Ln(2);
+                
+                // Deskripsi/Keterangan
+                if (!empty($report['keterangan'])) {
+                    $pdf->SetFont('helvetica', 'B', 9);
+                    $pdf->Cell(0, 5, 'Keterangan Pekerjaan:', 0, 1, 'L');
+                    $pdf->SetFont('helvetica', '', 8);
+                    $keterangan = htmlspecialchars($report['keterangan']);
+                    if (strlen($keterangan) > 500) {
+                        $keterangan = substr($keterangan, 0, 500) . '...';
+                    }
+                    $pdf->MultiCell(0, 4, $keterangan, 0, 'L');
+                    $pdf->Ln(2);
+                }
+                
+                // ===================================================================
+                // --- BAGIAN FOTO ---
+                // ===================================================================
+                $hasPhotos = false;
+                $photoY = $pdf->GetY();
+                
+                // Foto Bukti
+                if (!empty($report['foto_bukti'])) {
+                    $hasPhotos = true;
+                    $photoPath = '../assets/uploads/' . $report['foto_bukti'];
+                    addPhotoToPDF($pdf, $photoPath, "Foto Bukti", 15, $photoY);
+                }
+                
+                // Foto Sebelum
+                if (!empty($report['foto_sebelum'])) {
+                    $hasPhotos = true;
+                    $photoPath = '../assets/uploads/' . $report['foto_sebelum'];
+                    $xPos = 15 + 90; // Posisi kedua (90mm dari kiri)
+                    addPhotoToPDF($pdf, $photoPath, "Foto Sebelum", $xPos, $photoY);
+                }
+                
+                // Foto Sesudah
+                if (!empty($report['foto_sesudah'])) {
+                    $hasPhotos = true;
+                    $photoPath = '../assets/uploads/' . $report['foto_sesudah'];
+                    $xPos = 15 + 180; // Posisi ketiga (180mm dari kiri)
+                    addPhotoToPDF($pdf, $photoPath, "Foto Sesudah", $xPos, $photoY);
+                }
+                
+                if ($hasPhotos) {
+                    $pdf->SetY($photoY + 45); // Pindah ke bawah setelah foto
+                }
+                
+                // Garis pemisah antar laporan
+                $pdf->Line(10, $pdf->GetY(), 287, $pdf->GetY());
+                $pdf->Ln(5);
+                
+                // Jika sudah di akhir halaman, tambah halaman baru
+                if ($pdf->GetY() > ($pdf->getPageHeight() - 30)) {
+                    $pdf->AddPage();
+                }
             }
+        } else {
+            // Mode tanpa foto - tampilkan tabel ringkas
+            // Header Tabel
+            $header = ['No', 'Kode Laporan', 'Tanggal Laporan', 'Perusahaan', 'Customer', 'Pekerja', 'Jadwal', 'Lokasi', 'Prioritas'];
+            $widths = [8, 20, 22, 35, 25, 25, 22, 35, 15];
             
-            // Header Laporan
-            $pdf->SetFont('helvetica', 'B', 10);
             $pdf->SetFillColor(240, 240, 240);
-            $pdf->Cell(0, 7, 'Laporan #' . $no++ . ' - ' . htmlspecialchars($report['kode_laporan'] ?? 'N/A'), 0, 1, 'L', true);
-            $pdf->SetFont('helvetica', '', 9);
+            $pdf->SetTextColor(0);
+            $pdf->SetDrawColor(180, 180, 180);
+            $pdf->SetFont('helvetica', 'B', 7);
             
-            // Informasi Laporan
-            $infoY = $pdf->GetY();
-            
-            // Kolom kiri - Informasi dasar
-            $pdf->SetXY(15, $infoY);
-            $pdf->MultiCell(80, 5, 
-                "Tanggal Laporan: " . formatTanggalIndonesia($report['tanggal_pelaporan']) . "\n" .
-                "Jam: " . ($report['jam_mulai'] ?? '-') . " - " . ($report['jam_selesai'] ?? '-') . "\n" .
-                "Perusahaan: " . htmlspecialchars($report['nama_perusahaan'] ?? 'N/A') . "\n" .
-                "Customer: " . htmlspecialchars($report['nama_customer'] ?? 'N/A') . "\n" .
-                "Pekerja: " . htmlspecialchars($report['pekerja_nama'] ?? 'N/A') . "\n" .
-                "Jabatan: " . htmlspecialchars($report['pekerja_jabatan'] ?? 'N/A')
-            , 0, 'L');
-            
-            // Kolom kanan - Informasi tambahan
-            $pdf->SetXY(105, $infoY);
-            $pdf->MultiCell(80, 5, 
-                "Jadwal: " . ($report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) : 'N/A') . "\n" .
-                "Jam Jadwal: " . ($report['jadwal_jam'] ?? '-') . "\n" .
-                "Lokasi: " . htmlspecialchars($report['jadwal_lokasi'] ?? 'N/A') . "\n" .
-                "Prioritas: " . htmlspecialchars($report['prioritas'] ?? 'N/A') . "\n" .
-                "Status: " . htmlspecialchars($report['jadwal_status'] ?? 'N/A') . "\n" .
-                "Rating: " . ($report['rating_customer'] ? str_repeat('★', $report['rating_customer']) . ' (' . $report['rating_customer'] . '/5)' : '-')
-            , 0, 'L');
-            
-            $pdf->Ln(2);
-            
-            // Deskripsi/Keterangan
-            if (!empty($report['keterangan'])) {
-                $pdf->SetFont('helvetica', 'B', 9);
-                $pdf->Cell(0, 5, 'Keterangan Pekerjaan:', 0, 1, 'L');
-                $pdf->SetFont('helvetica', '', 8);
-                $pdf->MultiCell(0, 4, htmlspecialchars($report['keterangan']), 0, 'L');
-                $pdf->Ln(2);
+            // Draw header
+            for ($i = 0; $i < count($header); $i++) {
+                $pdf->Cell($widths[$i], 7, $header[$i], 1, 0, 'C', 1);
             }
+            $pdf->Ln();
             
-            // Bahan yang Digunakan
-            if (!empty($report['bahan_digunakan'])) {
-                $pdf->SetFont('helvetica', 'B', 9);
-                $pdf->Cell(0, 5, 'Bahan yang Digunakan:', 0, 1, 'L');
-                $pdf->SetFont('helvetica', '', 8);
-                $pdf->MultiCell(0, 4, htmlspecialchars($report['bahan_digunakan']), 0, 'L');
-                $pdf->Ln(2);
-            }
+            // Data Laporan
+            $pdf->SetFont('helvetica', '', 7);
+            $pdf->SetFillColor(255);
+            $no = 1;
+            $rowHeight = 8;
             
-            // Hasil Pengamatan
-            if (!empty($report['hasil_pengamatan'])) {
-                $pdf->SetFont('helvetica', 'B', 9);
-                $pdf->Cell(0, 5, 'Hasil Pengamatan:', 0, 1, 'L');
-                $pdf->SetFont('helvetica', '', 8);
-                $pdf->MultiCell(0, 4, htmlspecialchars($report['hasil_pengamatan']), 0, 'L');
-                $pdf->Ln(2);
-            }
-            
-            // Rekomendasi
-            if (!empty($report['rekomendasi'])) {
-                $pdf->SetFont('helvetica', 'B', 9);
-                $pdf->Cell(0, 5, 'Rekomendasi:', 0, 1, 'L');
-                $pdf->SetFont('helvetica', '', 8);
-                $pdf->MultiCell(0, 4, htmlspecialchars($report['rekomendasi']), 0, 'L');
-                $pdf->Ln(2);
-            }
-            
-            // ===================================================================
-            // --- BAGIAN FOTO ---
-            // ===================================================================
-            $hasPhotos = false;
-            $photoY = $pdf->GetY();
-            
-            // Foto Bukti
-            if (!empty($report['foto_bukti'])) {
-                $hasPhotos = true;
-                $photoPath = '../assets/uploads/' . $report['foto_bukti'];
-                $this->addPhotoToPDF($pdf, $photoPath, "Foto Bukti", 15, $photoY);
-            }
-            
-            // Foto Sebelum
-            if (!empty($report['foto_sebelum'])) {
-                $hasPhotos = true;
-                $photoPath = '../assets/uploads/' . $report['foto_sebelum'];
-                $xPos = 15 + 90; // Posisi kedua (90mm dari kiri)
-                $this->addPhotoToPDF($pdf, $photoPath, "Foto Sebelum", $xPos, $photoY);
-            }
-            
-            // Foto Sesudah
-            if (!empty($report['foto_sesudah'])) {
-                $hasPhotos = true;
-                $photoPath = '../assets/uploads/' . $report['foto_sesudah'];
-                $xPos = 15 + 180; // Posisi ketiga (180mm dari kiri)
-                $this->addPhotoToPDF($pdf, $photoPath, "Foto Sesudah", $xPos, $photoY);
-            }
-            
-            if ($hasPhotos) {
-                $pdf->SetY($photoY + 45); // Pindah ke bawah setelah foto
-            }
-            
-            // Garis pemisah antar laporan
-            $pdf->Line(10, $pdf->GetY(), 287, $pdf->GetY());
-            $pdf->Ln(5);
-            
-            // Jika sudah di akhir halaman, tambah halaman baru
-            if ($pdf->GetY() > ($pdf->getPageHeight() - 30)) {
-                $pdf->AddPage();
+            foreach ($serviceData['reports'] as $report) {
+                // Cek apakah perlu page break
+                if ($pdf->GetY() > ($pdf->getPageHeight() - 30)) {
+                    $pdf->AddPage();
+                    // Tambah header tabel di halaman baru
+                    $pdf->SetFillColor(240, 240, 240);
+                    $pdf->SetTextColor(0);
+                    $pdf->SetDrawColor(180, 180, 180);
+                    $pdf->SetFont('helvetica', 'B', 7);
+                    for ($i = 0; $i < count($header); $i++) {
+                        $pdf->Cell($widths[$i], 7, $header[$i], 1, 0, 'C', 1);
+                    }
+                    $pdf->Ln();
+                    $pdf->SetFont('helvetica', '', 7);
+                    $pdf->SetFillColor(255);
+                }
+                
+                // Row data
+                $currentX = $pdf->GetX();
+                $currentY = $pdf->GetY();
+                
+                // No
+                $pdf->MultiCell($widths[0], $rowHeight, $no++, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Kode Laporan
+                $pdf->MultiCell($widths[1], $rowHeight, htmlspecialchars($report['kode_laporan'] ?? 'N/A'), 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Tanggal Laporan
+                $tglLaporan = formatTanggalIndonesia($report['tanggal_pelaporan']) . "\n" . ($report['jam_mulai'] ?? '');
+                $pdf->MultiCell($widths[2], $rowHeight, $tglLaporan, 'LTRB', 'C', true, 0, '', '', true, 0, true, true, $rowHeight, 'M');
+                
+                // Perusahaan
+                $perusahaan = htmlspecialchars($report['nama_perusahaan'] ?? 'N/A');
+                if (strlen($perusahaan) > 20) {
+                    $perusahaan = substr($perusahaan, 0, 20) . '...';
+                }
+                $pdf->MultiCell($widths[3], $rowHeight, $perusahaan, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Customer
+                $customer = htmlspecialchars($report['nama_customer'] ?? 'N/A');
+                if (strlen($customer) > 15) {
+                    $customer = substr($customer, 0, 15) . '...';
+                }
+                $pdf->MultiCell($widths[4], $rowHeight, $customer, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Pekerja
+                $pekerja = htmlspecialchars($report['pekerja_nama'] ?? 'N/A');
+                if (strlen($pekerja) > 15) {
+                    $pekerja = substr($pekerja, 0, 15) . '...';
+                }
+                $pdf->MultiCell($widths[5], $rowHeight, $pekerja, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Jadwal
+                $jadwal = $report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) . "\n" . ($report['jadwal_jam'] ?? '') : 'N/A';
+                $pdf->MultiCell($widths[6], $rowHeight, $jadwal, 'LTRB', 'C', true, 0, '', '', true, 0, true, true, $rowHeight, 'M');
+                
+                // Lokasi
+                $lokasi = htmlspecialchars($report['jadwal_lokasi'] ?? 'N/A');
+                if (strlen($lokasi) > 25) {
+                    $lokasi = substr($lokasi, 0, 25) . '...';
+                }
+                $pdf->MultiCell($widths[7], $rowHeight, $lokasi, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Prioritas
+                $prioritas = $report['prioritas'] ?? 'N/A';
+                $fillColor = 255; // default white
+                $textColor = 0; // default black
+                
+                switch(strtolower($prioritas)) {
+                    case 'darurat':
+                        $fillColor = array(255, 200, 200); // merah muda
+                        $textColor = 0; // hitam
+                        break;
+                    case 'tinggi':
+                        $fillColor = array(255, 235, 200); // orange muda
+                        $textColor = 0; // hitam
+                        break;
+                    case 'sedang':
+                        $fillColor = array(255, 255, 200); // kuning muda
+                        $textColor = 0; // hitam
+                        break;
+                    case 'rendah':
+                        $fillColor = array(200, 255, 200); // hijau muda
+                        $textColor = 0; // hitam
+                        break;
+                    default:
+                        $fillColor = 255;
+                        $textColor = 0;
+                }
+                
+                $pdf->SetFillColorArray($fillColor);
+                $pdf->SetTextColor($textColor);
+                $pdf->MultiCell($widths[8], $rowHeight, $prioritas, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
+                // Reset warna untuk row berikutnya
+                $pdf->SetFillColor(255);
+                $pdf->SetTextColor(0);
+                
+                $pdf->Ln($rowHeight);
             }
         }
         
@@ -553,7 +733,7 @@ if (!empty($reportsByService)) {
         $pdf->SetFont('helvetica', 'B', 9);
         $pdf->SetFillColor(245, 245, 245);
         $pdf->Cell(0, 8, 'Total Layanan ' . htmlspecialchars($serviceData['service_name']) . ': ' . $total_layanan . ' pekerjaan | Total Pendapatan: Rp ' . number_format($pendapatan_layanan, 0, ',', '.'), 0, 1, 'R', true);
-        $pdf->Ln(5);
+        $pdf->Ln(3);
     }
     
     // Ringkasan Total
@@ -564,9 +744,13 @@ if (!empty($reportsByService)) {
     
     $summary = "Total Laporan: " . $total_laporan . " laporan\n" .
                "Total Layanan Berbeda: " . $service_count . " jenis layanan\n" .
-               "Total Pendapatan: Rp " . number_format($total_pendapatan, 0, ',', '.') . "\n" .
-               "Laporan dengan Foto: " . $report_counts['with_photo'] . "\n" .
-               "Rata-rata per Laporan: Rp " . ($total_laporan > 0 ? number_format($total_pendapatan / $total_laporan, 0, ',', '.') : '0');
+               "Total Pendapatan: Rp " . number_format($total_pendapatan, 0, ',', '.') . "\n";
+    
+    if ($show_photos) {
+        $summary .= "Laporan dengan Foto: " . $report_counts['with_photo'] . "\n";
+    }
+    
+    $summary .= "Rata-rata per Laporan: Rp " . ($total_laporan > 0 ? number_format($total_pendapatan / $total_laporan, 0, ',', '.') : '0');
     
     $pdf->MultiCell(0, 8, $summary, 0, 'C', false);
     $pdf->Ln(10);
@@ -606,84 +790,15 @@ $pdf->Cell(0, 10, 'Dokumen ini dihasilkan secara otomatis oleh Sistem Pest Contr
 // 6. Output PDF
 // -----------------------------------------------------------------
 try {
-    $filename = 'Laporan_Pest_Control_Foto_' . date('Ymd_His') . '.pdf';
+    if ($show_photos) {
+        $filename = 'Laporan_Pest_Control_Foto_' . date('Ymd_His') . '.pdf';
+    } else {
+        $filename = 'Laporan_Pest_Control_' . date('Ymd_His') . '.pdf';
+    }
     $pdf->Output($filename, 'I'); // 'I' untuk tampil di browser, 'D' untuk download
 } catch (Exception $e) {
     die("Error output PDF: " . $e->getMessage());
 }
 
 exit;
-
-// ===================================================================
-// --- FUNGSI TAMBAHAN UNTUK MENAMPILKAN FOTO ---
-// ===================================================================
-function addPhotoToPDF(&$pdf, $photoPath, $caption, $x, $y) {
-    $maxWidth = 80; // mm
-    $maxHeight = 40; // mm
-    
-    // Simpan posisi Y awal
-    $startY = $y;
-    
-    // Gambar border untuk foto
-    $pdf->SetDrawColor(150, 150, 150);
-    $pdf->SetLineWidth(0.3);
-    $pdf->Rect($x, $y, $maxWidth, $maxHeight + 5);
-    
-    // Coba tambahkan foto
-    try {
-        if (file_exists($photoPath)) {
-            // Dapatkan dimensi gambar
-            $imageInfo = getimagesize($photoPath);
-            if ($imageInfo !== false) {
-                $width = $imageInfo[0];
-                $height = $imageInfo[1];
-                
-                // Hitung rasio untuk fitting
-                $widthRatio = $maxWidth / $width;
-                $heightRatio = ($maxHeight - 5) / $height;
-                $ratio = min($widthRatio, $heightRatio);
-                
-                $newWidth = $width * $ratio;
-                $newHeight = $height * $ratio;
-                
-                // Hitung posisi tengah
-                $xPos = $x + ($maxWidth - $newWidth) / 2;
-                $yPos = $y + 2;
-                
-                // Tambahkan gambar
-                $pdf->Image($photoPath, $xPos, $yPos, $newWidth, $newHeight, '', '', '', false, 300, '', false, false, 0, false, false, false);
-            } else {
-                // Jika tidak bisa mendapatkan info gambar
-                $pdf->SetFont('helvetica', 'I', 8);
-                $pdf->SetTextColor(150, 150, 150);
-                $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
-                $pdf->Cell($maxWidth, 10, 'Gambar tidak\nterbaca', 0, 0, 'C');
-                $pdf->SetTextColor(0, 0, 0);
-            }
-        } else {
-            // Jika file tidak ditemukan
-            $pdf->SetFont('helvetica', 'I', 8);
-            $pdf->SetTextColor(150, 150, 150);
-            $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
-            $pdf->Cell($maxWidth, 10, 'File tidak\nditemukan', 0, 0, 'C');
-            $pdf->SetTextColor(0, 0, 0);
-        }
-    } catch (Exception $e) {
-        // Jika error saat menambahkan gambar
-        $pdf->SetFont('helvetica', 'I', 8);
-        $pdf->SetTextColor(150, 150, 150);
-        $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
-        $pdf->Cell($maxWidth, 10, 'Error: ' . substr($e->getMessage(), 0, 20), 0, 0, 'C');
-        $pdf->SetTextColor(0, 0, 0);
-    }
-    
-    // Tambahkan caption
-    $pdf->SetFont('helvetica', 'B', 8);
-    $pdf->SetTextColor(0, 0, 0);
-    $pdf->SetXY($x, $y + $maxHeight - 3);
-    $pdf->Cell($maxWidth, 5, $caption, 0, 0, 'C');
-    
-    // Kembalikan posisi Y ke awal
-    $pdf->SetY($startY);
-}
 ?>
