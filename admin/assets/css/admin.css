@@ -16,13 +16,13 @@ body {
   font-weight: 600;
 }
 .navbar-custom .navbar-text {
-  color: #343a40;
+  color: #fc3f6e;
 }
 .navbar-custom .nav-link {
   color: #6c757d;
 }
 .navbar-custom .nav-link:hover {
-  color: #0056b3;
+  color: #ff83a2;
 }
 
 /* 2. Sidebar Customization */

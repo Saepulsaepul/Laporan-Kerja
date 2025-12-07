@@ -88,7 +88,7 @@ try {
     $sections = [];
 }
 
-$pageTitle = 'Kelola Kategori';
+$pageTitle = 'Kelola Jadwal';
 
 require_once 'includes/header.php';
 ?>
@@ -236,8 +236,8 @@ require_once 'includes/navbar.php';
                     <input type="hidden" name="action" value="<?php echo $editCategory ? 'update' : 'create'; ?>">
                     <?php if ($editCategory): ?><input type="hidden" name="id" value="<?php echo htmlspecialchars($editCategory['id']); ?>"><?php endif; ?>
                     
-                    <div class="mb-3"><label for="section_id" class="form-label">Seksi <span class="text-danger">*</span></label><select class="form-select" id="section_id" name="section_id" required><option value="">Pilih Seksi</option><?php foreach ($sections as $section): ?><option value="<?php echo $section['id']; ?>" <?php echo ($editCategory && $editCategory['section_id'] == $section['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($section['section_name']); ?></option><?php endforeach; ?></select></div>
-                    <div class="mb-3"><label for="category_name" class="form-label">Nama Kategori <span class="text-danger">*</span></label><input type="text" class="form-control" id="category_name" name="category_name" value="<?php echo htmlspecialchars($editCategory['category_name'] ?? ''); ?>" required></div>
+                    <div class="mb-3"><label for="section_id" class="form-label">Jenis <span class="text-danger">*</span></label><select class="form-select" id="section_id" name="section_id" required><option value="">Pilih Seksi</option><?php foreach ($sections as $section): ?><option value="<?php echo $section['id']; ?>" <?php echo ($editCategory && $editCategory['section_id'] == $section['id']) ? 'selected' : ''; ?>><?php echo htmlspecialchars($section['section_name']); ?></option><?php endforeach; ?></select></div>
+                    <div class="mb-3"><label for="category_name" class="form-label">Nama Perusahaan <span class="text-danger">*</span></label><input type="text" class="form-control" id="category_name" name="category_name" value="<?php echo htmlspecialchars($editCategory['category_name'] ?? ''); ?>" required></div>
                     <div class="mb-3"><label for="description" class="form-label">Deskripsi <span class="text-muted small">(Opsional)</span></label><textarea class="form-control" id="description" name="description" rows="3"><?php echo htmlspecialchars($editCategory['description'] ?? ''); ?></textarea></div>
                 </div>
                 <div class="modal-footer"><a href="categories.php" class="btn btn-secondary">Batal</a><button type="submit" class="btn btn-primary"><?php echo $editCategory ? '<i class="fas fa-save me-2"></i>Update' : '<i class="fas fa-plus me-2"></i>Simpan'; ?></button></div>

@@ -1,6 +1,6 @@
 :root {
-            --primary-color: #0d6efd;
-            --primary-darker: #0b5ed7;
+            --primary-color: #fc3f6e;
+            --primary-darker: #fc3f6e;
             --background-color: #f0f2f5;
             --card-background: #ffffff;
             --text-color: #495057;
@@ -35,7 +35,7 @@
 
         .login-card-header {
             text-align: center;
-            padding: 2.5rem 1.5rem;
+            padding: 3rem 1.5rem;
             background: linear-gradient(135deg, var(--primary-color), var(--primary-darker));
             color: white;
         }
@@ -43,7 +43,7 @@
         /* --- PERUBAHAN CSS DI SINI --- */
         .logo-placeholder {
             width: auto;
-            max-width: 120px; 
+            max-width: 200px; 
             height: auto;
             margin-bottom: 1.25rem;
             margin-left: auto;   /* Tambahkan baris ini */
@@ -114,7 +114,7 @@
             border-radius: 8px;
         }
         .form-control-lg:focus {
-             box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+             box-shadow: 0 0 0 0.25rem rgba(255, 59, 134, 0.25);
              border-color: var(--primary-color);
         }
 

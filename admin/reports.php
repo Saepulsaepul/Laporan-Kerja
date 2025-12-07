@@ -10,137 +10,274 @@ $success = $_SESSION['success'] ?? null;
 $error = $_SESSION['error'] ?? null;
 unset($_SESSION['success'], $_SESSION['error']);
 
+// Inisialisasi filter
+$filter_date_from = $_GET['date_from'] ?? '';
+$filter_date_to = $_GET['date_to'] ?? '';
+$filter_pekerja_id = isset($_GET['pekerja_id']) ? (int)$_GET['pekerja_id'] : '';
+$search = $_GET['search'] ?? '';
+
+// Ambil data pekerja untuk filter dropdown
+try {
+    $workers = $pdo->query("SELECT id, nama, username FROM users WHERE status = 'Aktif' ORDER BY nama ASC")->fetchAll();
+} catch (PDOException $e) {
+    $error = "Gagal mengambil data pekerja: " . $e->getMessage();
+    $workers = [];
+}
+
+// HANDLE DELETE ACTION
 if (isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
+    
     try {
-        $stmt = $pdo->prepare("SELECT foto_bukti FROM reports WHERE id = ?");
+        // Cek apakah ada laporan dengan ID tersebut
+        $stmt = $pdo->prepare("SELECT foto_bukti, foto_sebelum, foto_sesudah FROM reports WHERE id = ?");
         $stmt->execute([$id]);
-        $foto_bukti = $stmt->fetchColumn();
+        $photos = $stmt->fetch(PDO::FETCH_ASSOC);
         
+        // Hapus file foto jika ada
+        $upload_dir = '../assets/uploads/';
+        $photos_to_delete = [
+            $photos['foto_bukti'] ?? null,
+            $photos['foto_sebelum'] ?? null,
+            $photos['foto_sesudah'] ?? null
+        ];
+        
+        foreach ($photos_to_delete as $photo) {
+            if ($photo && file_exists($upload_dir . $photo)) {
+                unlink($upload_dir . $photo);
+            }
+        }
+        
+        // Hapus dari database
         $deleteStmt = $pdo->prepare("DELETE FROM reports WHERE id = ?");
         $deleteStmt->execute([$id]);
 
-        if ($deleteStmt->rowCount() > 0 && $foto_bukti) {
-            $filePath = '../assets/uploads/' . $foto_bukti;
-            if (file_exists($filePath)) {
-                unlink($filePath);
-            }
+        if ($deleteStmt->rowCount() > 0) {
+            $_SESSION['success'] = 'Laporan berhasil dihapus!';
+        } else {
+            $_SESSION['error'] = 'Laporan tidak ditemukan!';
         }
-        $_SESSION['success'] = 'Laporan berhasil dihapus!';
     } catch (PDOException $e) {
         $_SESSION['error'] = 'Terjadi kesalahan sistem: ' . $e->getMessage();
+        error_log("Delete Report Error: " . $e->getMessage());
     }
     header("Location: reports.php");
     exit();
 }
 
+// Ambil data laporan dengan filter (sesuai struktur database yang ada)
 try {
-    $page = isset($_GET['page']) && $_GET['page'] > 0 ? (int)$_GET['page'] : 1;
-    $limit = 10;
-    $offset = ($page - 1) * $limit;
-
-    $search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
-    $whereClause = '';
-    $params = [];
-
-    if (!empty($search)) {
-        $whereClause = "WHERE u.nama_lengkap LIKE :search OR c.category_name LIKE :search OR r.keterangan LIKE :search";
-        $params[':search'] = "%$search%";
-    }
-
-    $countSql = "SELECT COUNT(r.id) FROM reports r JOIN users u ON r.user_id = u.id JOIN categories c ON r.category_id = c.id $whereClause";
-    $countStmt = $pdo->prepare($countSql);
-    $countStmt->execute($params);
-    $totalRecords = $countStmt->fetchColumn();
-    $totalPages = ceil($totalRecords / $limit);
-
-    $sql = "SELECT r.id, r.keterangan, r.tanggal_pelaporan, r.jam_pelaporan, r.foto_bukti, 
-                   u.nama_lengkap, u.jabatan, c.category_name 
-            FROM reports r 
-            JOIN users u ON r.user_id = u.id 
-            JOIN categories c ON r.category_id = c.id 
-            $whereClause
-            ORDER BY r.created_at DESC 
-            LIMIT :limit OFFSET :offset";
-
-    $stmt = $pdo->prepare($sql);
-    foreach ($params as $key => $val) { $stmt->bindValue($key, $val); }
-    $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    $query = "SELECT r.*, 
+              u.nama as pekerja_nama, u.username as pekerja_username, u.jabatan as pekerja_jabatan,
+              c.nama_perusahaan, c.nama_customer, c.telepon as customer_telepon,
+              j.tanggal as jadwal_tanggal, j.jam as jadwal_jam, j.lokasi as jadwal_lokasi,
+              s.nama_service, s.kode_service,
+              a.nama as admin_nama
+              FROM reports r
+              LEFT JOIN users u ON r.user_id = u.id
+              LEFT JOIN customers c ON r.customer_id = c.id
+              LEFT JOIN jadwal j ON r.jadwal_id = j.id
+              LEFT JOIN services s ON j.service_id = s.id
+              LEFT JOIN admin_users a ON j.admin_id = a.id
+              WHERE 1=1";
     
-    $stmt->execute();
-    $reports = $stmt->fetchAll();
-
+    $params = [];
+    
+    if (!empty($filter_date_from)) {
+        $query .= " AND r.tanggal_pelaporan >= ?";
+        $params[] = $filter_date_from;
+    }
+    
+    if (!empty($filter_date_to)) {
+        $query .= " AND r.tanggal_pelaporan <= ?";
+        $params[] = $filter_date_to;
+    }
+    
+    if (!empty($filter_pekerja_id)) {
+        $query .= " AND r.user_id = ?";
+        $params[] = $filter_pekerja_id;
+    }
+    
+    if (!empty($search)) {
+        $query .= " AND (c.nama_perusahaan LIKE ? OR c.nama_customer LIKE ? OR r.keterangan LIKE ? OR s.nama_service LIKE ?)";
+        $searchTerm = "%$search%";
+        $params[] = $searchTerm;
+        $params[] = $searchTerm;
+        $params[] = $searchTerm;
+        $params[] = $searchTerm;
+    }
+    
+    $query .= " ORDER BY r.tanggal_pelaporan DESC, r.created_at DESC";
+    
+    $stmt = $pdo->prepare($query);
+    $stmt->execute($params);
+    $reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Hitung statistik
+    $total_reports = count($reports);
+    $total_with_photos = count(array_filter($reports, function($report) {
+        return !empty($report['foto_bukti']) || !empty($report['foto_sebelum']) || !empty($report['foto_sesudah']);
+    }));
+    
 } catch (PDOException $e) {
     $error = "Gagal mengambil data laporan: " . $e->getMessage();
+    error_log("Report Query Error: " . $e->getMessage());
     $reports = [];
-    $totalPages = 0;
+    $total_reports = 0;
+    $total_with_photos = 0;
 }
 
-$pageTitle = 'Kelola Laporan';
+$pageTitle = 'Laporan Pekerjaan';
 
 require_once 'includes/header.php';
 ?>
 
 <style>
     .report-card {
+        background-color: #fff;
         border: 1px solid #e9ecef;
         border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-        background-color: #fff;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.05);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
+        margin-bottom: 20px;
     }
     .report-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
     }
-    .report-card-header {
+    .report-header {
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid #e9ecef;
+        background-color: #f8f9fa;
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 1rem 1.25rem;
-        background-color: #fff;
-        border-bottom: 1px solid #f0f0f0;
-        border-top-left-radius: 12px;
-        border-top-right-radius: 12px;
     }
-    .report-card-body {
+    .report-body {
         padding: 1.25rem;
     }
-    .report-card-footer {
+    .report-footer {
         padding: 1rem 1.25rem;
+        border-top: 1px solid #e9ecef;
         background-color: #f8f9fa;
-        border-top: 1px solid #f0f0f0;
         border-bottom-left-radius: 12px;
         border-bottom-right-radius: 12px;
     }
-    .reporter-avatar {
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        background-color: var(--bs-primary);
-        color: white;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 600;
+    .info-item {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 0.75rem;
+    }
+    .info-item i {
+        color: #6c757d;
+        width: 20px;
+        margin-top: 3px;
+        margin-right: 10px;
+        text-align: center;
+    }
+    .report-keterangan {
+        background-color: #f8f9fa;
+        border-left: 4px solid #0d6efd;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        line-height: 1.6;
     }
     .empty-state-container {
         background-color: #f8f9fa;
         padding: 4rem;
         border-radius: 12px;
         border: 1px dashed #dee2e6;
+        text-align: center;
     }
-    .page-item.active .page-link {
-        background-color: #0d6efd;
-        border-color: #0d6efd;
+    .filter-card {
+        background-color: #fff;
+        border: 1px solid #e9ecef;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
-    /* --- PERBAIKAN UNTUK BADGE KATEGORI AGAR TIDAK OVERFLOW --- */
-    .report-card .badge {
-        white-space: normal; /* Izinkan teks untuk turun baris */
-        line-height: 1.4;    /* Atur jarak antar baris agar rapi */
-        text-align: left;    /* Pastikan teks rata kiri saat turun baris */
-        word-break: break-word; /* Pecah kata jika perlu untuk mencegah overflow */
+    .stats-card {
+        background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+        color: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .photo-preview {
+        max-width: 200px;
+        max-height: 150px;
+        border-radius: 8px;
+        border: 2px solid #e9ecef;
+        cursor: pointer;
+        transition: transform 0.2s ease;
+        margin: 5px;
+    }
+    .photo-preview:hover {
+        transform: scale(1.05);
+    }
+    .badge-date {
+        background-color: #e7f1ff;
+        color: #0d6efd;
+        font-size: 0.85rem;
+        padding: 0.3rem 0.7rem;
+        border-radius: 50px;
+    }
+    .service-badge {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        font-size: 0.85rem;
+        padding: 0.3rem 0.7rem;
+        border-radius: 50px;
+    }
+    .company-badge {
+        background-color: #e7f5ff;
+        color: #0c63e4;
+        font-size: 0.75rem;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        display: inline-block;
+        margin-top: 3px;
+    }
+    .photo-gallery {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+    }
+    .photo-item {
+        text-align: center;
+    }
+    .photo-label {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 3px;
+    }
+    .rating-stars {
+        color: #ffc107;
+        font-size: 1.2rem;
+    }
+    .modal-photo {
+        max-height: 70vh;
+        width: auto;
+        margin: 0 auto;
+        display: block;
+    }
+    .timeline-info {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        padding: 0.75rem;
+        border-radius: 8px;
+        margin-top: 10px;
+    }
+    .timeline-item {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 5px;
+        font-size: 0.9rem;
     }
 </style>
 
@@ -154,139 +291,607 @@ require_once 'includes/navbar.php';
 
         <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
             <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
-                <h1 class="h2"><i class="fas fa-file-alt me-2"></i><?php echo $pageTitle; ?></h1>
+                <h1 class="h2"><i class="fas fa-clipboard-list me-2"></i><?php echo $pageTitle; ?></h1>
+                <div class="badge bg-primary fs-6">
+                    <i class="fas fa-file-alt me-1"></i> <?php echo $total_reports; ?> Laporan
+                </div>
             </div>
 
-            <?php if ($success): /* Notifikasi sukses */ ?>
-                <div class="alert alert-success alert-dismissible fade show" role="alert">
-                    <i class="fas fa-check-circle me-2"></i><?php echo htmlspecialchars($success); ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
+            <?php if ($success): ?>
+            <div class="alert alert-success alert-dismissible fade show" role="alert">
+                <i class="fas fa-check-circle me-2"></i><?php echo htmlspecialchars($success); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
             <?php endif; ?>
-            <?php if ($error): /* Notifikasi error */ ?>
-                <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                    <i class="fas fa-exclamation-triangle me-2"></i><?php echo htmlspecialchars($error); ?>
-                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
+            <?php if ($error): ?>
+            <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                <i class="fas fa-exclamation-triangle me-2"></i><?php echo htmlspecialchars($error); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
             <?php endif; ?>
 
-            <div class="card shadow-sm mb-4">
-                <div class="card-body d-flex flex-column flex-md-row justify-content-between align-items-center">
-                    <form method="GET" action="reports.php" class="flex-grow-1 me-md-3 mb-2 mb-md-0">
-                        <div class="input-group">
-                            <input type="text" class="form-control" name="search" placeholder="Cari laporan..." value="<?php echo htmlspecialchars($search); ?>">
-                            <button type="submit" class="btn btn-outline-secondary"><i class="fas fa-search"></i></button>
+            <!-- Stats Card -->
+            <div class="stats-card">
+                <div class="row">
+                    <div class="col-md-4 mb-3 mb-md-0">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-white rounded-circle p-3 me-3">
+                                <i class="fas fa-file-alt text-primary fa-2x"></i>
+                            </div>
+                            <div>
+                                <h3 class="mb-0 fw-bold"><?php echo $total_reports; ?></h3>
+                                <p class="mb-0 opacity-75">Total Laporan</p>
+                            </div>
                         </div>
-                    </form>
-                    <div class="btn-toolbar">
-                        <button class="btn btn-secondary me-2" disabled><i class="fas fa-filter me-2"></i>Filter</button>
-                        <a href="export_pdf.php" class="btn btn-success"><i class="fas fa-file-pdf me-2"></i>Export</a>
+                    </div>
+                    <div class="col-md-4 mb-3 mb-md-0">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-white rounded-circle p-3 me-3">
+                                <i class="fas fa-camera text-success fa-2x"></i>
+                            </div>
+                            <div>
+                                <h3 class="mb-0 fw-bold"><?php echo $total_with_photos; ?></h3>
+                                <p class="mb-0 opacity-75">Dengan Foto</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex align-items-center">
+                            <div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <?php if (empty($reports)): ?>
-                <div class="text-center empty-state-container">
-                    <i class="fas fa-search-minus fa-4x text-muted mb-4"></i>
-                    <h4 class="text-dark fw-bold"><?php echo !empty($search) ? 'Laporan Tidak Ditemukan' : 'Belum Ada Laporan Masuk'; ?></h4>
-                    <p class="text-muted">
-                        <?php echo !empty($search) ? 'Coba gunakan kata kunci lain atau <a href="reports.php" class="text-primary">tampilkan semua</a>.' : 'Semua laporan yang masuk akan ditampilkan di sini.'; ?>
-                    </p>
-                </div>
-            <?php else: ?>
-                <div class="reports-list">
-                    <?php foreach ($reports as $index => $report): ?>
-                        <div class="report-card mb-3">
-                            <div class="report-card-header">
-                                <div class="d-flex align-items-center">
-                                    <div class="reporter-avatar me-3"><span><?php echo strtoupper(substr($report['nama_lengkap'], 0, 1)); ?></span></div>
+            <!-- Filter Section -->
+            <div class="filter-card">
+                <h5 class="mb-3"><i class="fas fa-filter me-2"></i>Filter Laporan</h5>
+                <form method="GET" action="reports.php" class="row g-3">
+                    <div class="col-md-3">
+                        <label for="filter_date_from" class="form-label">Dari Tanggal</label>
+                        <input type="date" class="form-control" id="filter_date_from" name="date_from" 
+                               value="<?php echo htmlspecialchars($filter_date_from); ?>">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="filter_date_to" class="form-label">Sampai Tanggal</label>
+                        <input type="date" class="form-control" id="filter_date_to" name="date_to" 
+                               value="<?php echo htmlspecialchars($filter_date_to); ?>">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="filter_pekerja_id" class="form-label">Pekerja</label>
+                        <select class="form-select" id="filter_pekerja_id" name="pekerja_id">
+                            <option value="">Semua Pekerja</option>
+                            <?php foreach ($workers as $worker): ?>
+                                <option value="<?php echo $worker['id']; ?>" 
+                                        <?php echo $filter_pekerja_id == $worker['id'] ? 'selected' : ''; ?>>
+                                    <?php echo htmlspecialchars($worker['nama']); ?> (<?php echo htmlspecialchars($worker['username']); ?>)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="search" class="form-label">Cari</label>
+                        <input type="text" class="form-control" id="search" name="search" 
+                               placeholder="Cari perusahaan/customer/layanan..." value="<?php echo htmlspecialchars($search); ?>">
+                    </div>
+                    <div class="col-12">
+                        <div class="d-flex">
+                            <button type="submit" class="btn btn-primary me-2">
+                                <i class="fas fa-search me-2"></i>Terapkan Filter
+                            </button>
+                            <a href="reports.php" class="btn btn-outline-secondary">
+                                <i class="fas fa-redo me-2"></i>Reset Filter
+                            </a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Reports List -->
+            <div class="row">
+                <?php if (empty($reports)): ?>
+                    <div class="col">
+                        <div class="text-center empty-state-container">
+                            <i class="fas fa-clipboard-check fa-4x text-muted mb-4"></i>
+                            <h4 class="text-dark fw-bold">Belum Ada Laporan</h4>
+                            <p class="text-muted">
+                                <?php echo !empty($filter_date_from) || !empty($filter_pekerja_id) || !empty($search) 
+                                    ? 'Tidak ditemukan laporan dengan filter yang dipilih.' 
+                                    : 'Belum ada laporan yang disubmit oleh pekerja.'; ?>
+                            </p>
+                        </div>
+                    </div>
+                <?php else: 
+                    foreach ($reports as $report): 
+                        $report_date = formatTanggalIndonesia($report['tanggal_pelaporan']);
+                        $jam_mulai = $report['jam_mulai'] ? date('H:i', strtotime($report['jam_mulai'])) : '-';
+                        $jam_selesai = $report['jam_selesai'] ? date('H:i', strtotime($report['jam_selesai'])) : '-';
+                        $jadwal_date = $report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) : '-';
+                        $jadwal_time = $report['jadwal_jam'] ? date('H:i', strtotime($report['jadwal_jam'])) : '-';
+                        
+                        // Path foto
+                        $upload_dir = '../assets/uploads/';
+                        $foto_bukti_path = $report['foto_bukti'] ? $upload_dir . $report['foto_bukti'] : '';
+                        $foto_sebelum_path = $report['foto_sebelum'] ? $upload_dir . $report['foto_sebelum'] : '';
+                        $foto_sesudah_path = $report['foto_sesudah'] ? $upload_dir . $report['foto_sesudah'] : '';
+                        
+                        $has_foto_bukti = !empty($report['foto_bukti']) && file_exists($foto_bukti_path);
+                        $has_foto_sebelum = !empty($report['foto_sebelum']) && file_exists($foto_sebelum_path);
+                        $has_foto_sesudah = !empty($report['foto_sesudah']) && file_exists($foto_sesudah_path);
+                        $has_any_photo = $has_foto_bukti || $has_foto_sebelum || $has_foto_sesudah;
+                        
+                        // Rating stars
+                        // $rating = $report['rating_customer'] ?? 0;
+                        // $stars = str_repeat('<i class="fas fa-star"></i>', $rating) . 
+                        //         str_repeat('<i class="far fa-star"></i>', 5 - $rating);
+                    ?>
+                        <div class="col-lg-6 mb-4">
+                            <div class="report-card">
+                                <div class="report-header">
                                     <div>
-                                        <strong class="d-block"><?php echo htmlspecialchars($report['nama_lengkap']); ?></strong>
-                                        <small class="text-muted"><?php echo htmlspecialchars($report['jabatan']); ?></small>
+                                        <h5 class="mb-1"><?php echo htmlspecialchars($report['nama_perusahaan']); ?></h5>
+                                        <span class="company-badge">
+                                            <?php echo htmlspecialchars($report['nama_customer']); ?>
+                                        </span>
+                                        <div class="mt-1">
+                                            <span class="service-badge">
+                                                <i class="fas fa-concierge-bell me-1"></i>
+                                                <?php echo htmlspecialchars($report['nama_service']); ?>
+                                                <?php if (!empty($report['kode_service'])): ?>
+                                                    <small>(<?php echo htmlspecialchars($report['kode_service']); ?>)</small>
+                                                <?php endif; ?>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <span class="badge-date">
+                                        <i class="fas fa-clock me-1"></i>
+                                        <?php echo $report_date; ?>
+                                    </span>
+                                </div>
+                                
+                                <div class="report-body">
+                                    <div class="info-item">
+                                        <i class="fas fa-user-tie"></i>
+                                        <div>
+                                            <strong>Pekerja:</strong> 
+                                            <?php echo htmlspecialchars($report['pekerja_nama']); ?>
+                                            <small class="text-muted">(<?php echo htmlspecialchars($report['pekerja_jabatan']); ?>)</small>
+                                            <br>
+                                            <small class="text-muted">@<?php echo htmlspecialchars($report['pekerja_username']); ?></small>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="info-item">
+                                        <i class="fas fa-calendar-check"></i>
+                                        <div>
+                                            <strong>Jadwal:</strong> 
+                                            <?php echo $jadwal_date . ' • ' . $jadwal_time; ?>
+                                            <?php if ($report['jadwal_lokasi']): ?>
+                                                <br><small class="text-muted"><?php echo htmlspecialchars($report['jadwal_lokasi']); ?></small>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="info-item">
+                                        <i class="fas fa-phone"></i>
+                                        <div>
+                                            <strong>Kontak Customer:</strong> 
+                                            <?php echo htmlspecialchars($report['customer_telepon']); ?>
+                                        </div>
+                                    </div>
+                                    
+                                    <?php if ($jam_mulai !== '-' || $jam_selesai !== '-'): ?>
+                                    <div class="timeline-info">
+                                        <div class="timeline-item">
+                                            <span>Jam Mulai:</span>
+                                            <strong><?php echo $jam_mulai; ?></strong>
+                                        </div>
+                                        <div class="timeline-item">
+                                            <span>Jam Selesai:</span>
+                                            <strong><?php echo $jam_selesai; ?></strong>
+                                        </div>
+                                        <?php if (!empty($report['bahan_digunakan'])): ?>
+                                        <div class="timeline-item">
+                                            <span>Bahan Digunakan:</span>
+                                            <strong><?php echo htmlspecialchars($report['bahan_digunakan']); ?></strong>
+                                        </div>
+                                        <?php endif; ?>
+                                    </div>
+                                    <?php endif; ?>
+                                    
+                                    <div class="report-keterangan mt-3">
+                                        <h6 class="mb-2"><i class="fas fa-clipboard-check me-2"></i>Keterangan Pekerjaan:</h6>
+                                        <?php echo nl2br(htmlspecialchars($report['keterangan'])); ?>
+                                    </div>
+                                    
+                                    <?php if (!empty($report['hasil_pengamatan'])): ?>
+                                    <div class="alert alert-warning mt-3">
+                                        <h6 class="mb-2"><i class="fas fa-binoculars me-2"></i>Hasil Pengamatan:</h6>
+                                        <?php echo nl2br(htmlspecialchars($report['hasil_pengamatan'])); ?>
+                                    </div>
+                                    <?php endif; ?>
+                                    
+                                    <?php if (!empty($report['rekomendasi'])): ?>
+                                    <div class="alert alert-info mt-3">
+                                        <h6 class="mb-2"><i class="fas fa-lightbulb me-2"></i>Rekomendasi:</h6>
+                                        <?php echo nl2br(htmlspecialchars($report['rekomendasi'])); ?>
+                                    </div>
+                                    <?php endif; ?>
+                                    
+                                    <?php if ($has_any_photo): ?>
+                                    <div class="mt-3">
+                                        <h6 class="mb-2"><i class="fas fa-camera me-2"></i>Foto Dokumentasi:</h6>
+                                        <div class="photo-gallery">
+                                            <?php if ($has_foto_sebelum): ?>
+                                            <div class="photo-item">
+                                                <img src="<?php echo $foto_sebelum_path; ?>" alt="Foto Sebelum" 
+                                                     class="photo-preview" 
+                                                     data-bs-toggle="modal" 
+                                                     data-bs-target="#photoModal"
+                                                     data-photo-src="<?php echo $foto_sebelum_path; ?>"
+                                                     data-photo-title="Foto Sebelum">
+                                                <div class="photo-label">Sebelum</div>
+                                            </div>
+                                            <?php endif; ?>
+                                            
+                                            <?php if ($has_foto_sesudah): ?>
+                                            <div class="photo-item">
+                                                <img src="<?php echo $foto_sesudah_path; ?>" alt="Foto Sesudah" 
+                                                     class="photo-preview" 
+                                                     data-bs-toggle="modal" 
+                                                     data-bs-target="#photoModal"
+                                                     data-photo-src="<?php echo $foto_sesudah_path; ?>"
+                                                     data-photo-title="Foto Sesudah">
+                                                <div class="photo-label">Sesudah</div>
+                                            </div>
+                                            <?php endif; ?>
+                                            
+                                            <?php if ($has_foto_bukti): ?>
+                                            <div class="photo-item">
+                                                <img src="<?php echo $foto_bukti_path; ?>" alt="Foto Bukti" 
+                                                     class="photo-preview" 
+                                                     data-bs-toggle="modal" 
+                                                     data-bs-target="#photoModal"
+                                                     data-photo-src="<?php echo $foto_bukti_path; ?>"
+                                                     data-photo-title="Foto Bukti">
+                                                <div class="photo-label">Bukti Kerja</div>
+                                            </div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    <?php endif; ?>
+                                
+                                
+                                <div class="report-footer">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <small class="text-muted">
+                                            <i class="fas fa-hashtag me-1"></i>
+                                            Kode: <?php echo htmlspecialchars($report['kode_laporan'] ?? 'N/A'); ?>
+                                            <?php if (!empty($report['created_at'])): ?>
+                                            <br>
+                                            <i class="fas fa-paper-plane me-1"></i>
+                                            <?php echo date('d/m/Y H:i', strtotime($report['created_at'])); ?>
+                                            <?php endif; ?>
+                                        </small>
+                                        <div>
+                                            <?php if ($has_any_photo): ?>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                                    data-bs-toggle="modal" 
+                                                    data-bs-target="#photoGalleryModal"
+                                                    data-photos='<?php echo json_encode([
+                                                        'sebelum' => $has_foto_sebelum ? $foto_sebelum_path : null,
+                                                        'sesudah' => $has_foto_sesudah ? $foto_sesudah_path : null,
+                                                        'bukti' => $has_foto_bukti ? $foto_bukti_path : null
+                                                    ]); ?>'>
+                                                <i class="fas fa-images me-1"></i>Semua Foto
+                                            </button>
+                                            <?php endif; ?>
+                                            <button type="button" class="btn btn-sm btn-outline-info ms-1" 
+                                                    data-bs-toggle="modal" 
+                                                    data-bs-target="#detailModal<?php echo $report['id']; ?>">
+                                                <i class="fas fa-info-circle me-1"></i>Detail
+                                            </button>
+                                            <a href="?delete=<?php echo $report['id']; ?>" class="btn btn-sm btn-outline-danger ms-1" 
+                                               onclick="return confirm('Hapus laporan ini? Semua foto terkait juga akan dihapus. Tindakan ini tidak dapat dibatalkan.')">
+                                                <i class="fas fa-trash"></i>
+                                            </a>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="text-end">
-                                    <small class="text-muted d-block"><?php echo formatTanggalIndonesia($report['tanggal_pelaporan']); ?></small>
-                                    <small class="text-muted d-block"><?php echo htmlspecialchars($report['jam_pelaporan']); ?></small>
-                                </div>
-                            </div>
-                            <div class="report-card-body">
-                                <h5><span class="badge bg-primary fw-normal"><?php echo htmlspecialchars($report['category_name']); ?></span></h5>
-                                <p class="mt-2 text-dark mb-0"><?php echo htmlspecialchars(substr($report['keterangan'], 0, 200)); ?><?php echo strlen($report['keterangan']) > 200 ? '...' : ''; ?></p>
-                            </div>
-                            <div class="report-card-footer d-flex justify-content-end">
-                                <button type="button" class="btn btn-sm btn-outline-info me-2" data-bs-toggle="modal" data-bs-target="#detailModal<?php echo $report['id']; ?>">
-                                    <i class="fas fa-eye me-1"></i>Lihat Detail
-                                </button>
-                                <a href="?delete=<?php echo $report['id']; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Anda yakin ingin menghapus laporan ini? Tindakan ini tidak dapat diurungkan.')">
-                                    <i class="fas fa-trash me-1"></i>Hapus
-                                </a>
                             </div>
                         </div>
 
+                        <!-- Modal Detail Laporan -->
                         <div class="modal fade" id="detailModal<?php echo $report['id']; ?>" tabindex="-1" aria-hidden="true">
-                            <div class="modal-dialog modal-lg modal-dialog-centered">
+                            <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
                                 <div class="modal-content">
-                                    <div class="modal-header bg-light">
-                                        <h5 class="modal-title">Detail Laporan</h5>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    <div class="modal-header bg-primary text-white">
+                                        <h5 class="modal-title">
+                                            <i class="fas fa-file-alt me-2"></i>Detail Lengkap Laporan
+                                        </h5>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
                                     </div>
                                     <div class="modal-body p-4">
-                                        <div class="row g-4">
-                                            <div class="col-lg-7">
-                                                <h6>Informasi Pelapor</h6>
-                                                <dl class="row mb-0">
-                                                    <dt class="col-sm-4">Nama</dt><dd class="col-sm-8"><?php echo htmlspecialchars($report['nama_lengkap']); ?></dd>
-                                                    <dt class="col-sm-4">Jabatan</dt><dd class="col-sm-8"><?php echo htmlspecialchars($report['jabatan']); ?></dd>
-                                                    <dt class="col-sm-4">Tanggal</dt><dd class="col-sm-8"><?php echo formatTanggalIndonesia($report['tanggal_pelaporan']); ?></dd>
-                                                    <dt class="col-sm-4">Jam</dt><dd class="col-sm-8"><?php echo htmlspecialchars($report['jam_pelaporan']); ?></dd>
-                                                </dl>
-                                                <hr>
-                                                <h6>Detail Laporan</h6>
-                                                <strong>Kategori:</strong>
-                                                <p><span class="badge bg-primary fs-6"><?php echo htmlspecialchars($report['category_name']); ?></span></p>
-                                                <strong>Keterangan:</strong>
-                                                <p class="mt-1" style="white-space: pre-wrap;"><?php echo htmlspecialchars($report['keterangan']); ?></p>
-                                            </div>
-                                            <div class="col-lg-5">
-                                                <strong>Foto Bukti:</strong>
-                                                <?php if ($report['foto_bukti']): ?>
-                                                    <a href="../assets/uploads/<?php echo htmlspecialchars($report['foto_bukti']); ?>" target="_blank">
-                                                        <img src="../assets/uploads/<?php echo htmlspecialchars($report['foto_bukti']); ?>" class="img-fluid rounded border mt-1" alt="Foto Bukti">
-                                                    </a>
-                                                <?php else: ?>
-                                                    <div class="text-center text-muted p-4 border rounded bg-light mt-1 h-100 d-flex align-items-center justify-content-center">
-                                                        <span><i class="fas fa-camera-slash fa-2x"></i><br>Tidak ada foto.</span>
+                                        <div class="row mb-4">
+                                            <div class="col-md-6">
+                                                <div class="card">
+                                                    <div class="card-header bg-light">
+                                                        <h6 class="mb-0"><i class="fas fa-user-tie me-2"></i>Data Pekerja</h6>
                                                     </div>
-                                                <?php endif; ?>
+                                                    <div class="card-body">
+                                                        <table class="table table-sm table-borderless">
+                                                            <tr><td width="40%"><strong>Nama</strong></td><td><?php echo htmlspecialchars($report['pekerja_nama']); ?></td></tr>
+                                                            <tr><td><strong>Username</strong></td><td><?php echo htmlspecialchars($report['pekerja_username']); ?></td></tr>
+                                                            <tr><td><strong>Jabatan</strong></td><td><?php echo htmlspecialchars($report['pekerja_jabatan']); ?></td></tr>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="col-md-6">
+                                                <div class="card">
+                                                    <div class="card-header bg-light">
+                                                        <h6 class="mb-0"><i class="fas fa-building me-2"></i>Data Customer</h6>
+                                                    </div>
+                                                    <div class="card-body">
+                                                        <table class="table table-sm table-borderless">
+                                                            <tr><td width="40%"><strong>Perusahaan</strong></td><td><?php echo htmlspecialchars($report['nama_perusahaan']); ?></td></tr>
+                                                            <tr><td><strong>Nama Customer</strong></td><td><?php echo htmlspecialchars($report['nama_customer']); ?></td></tr>
+                                                            <tr><td><strong>Telepon</strong></td><td><?php echo htmlspecialchars($report['customer_telepon']); ?></td></tr>
+                                                        </table>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
+                                        
+                                        <div class="row mb-4">
+                                            <div class="col-md-6">
+                                                <div class="card">
+                                                    <div class="card-header bg-light">
+                                                        <h6 class="mb-0"><i class="fas fa-calendar-alt me-2"></i>Data Jadwal</h6>
+                                                    </div>
+                                                    <div class="card-body">
+                                                        <table class="table table-sm table-borderless">
+                                                            <tr><td width="40%"><strong>Layanan</strong></td><td><?php echo htmlspecialchars($report['nama_service']); ?></td></tr>
+                                                            <tr><td><strong>Kode Layanan</strong></td><td><?php echo htmlspecialchars($report['kode_service'] ?? '-'); ?></td></tr>
+                                                            <tr><td><strong>Tanggal Jadwal</strong></td><td><?php echo $jadwal_date . ' ' . $jadwal_time; ?></td></tr>
+                                                            <tr><td><strong>Lokasi</strong></td><td><?php echo nl2br(htmlspecialchars($report['jadwal_lokasi'] ?? '-')); ?></td></tr>
+                                                            <?php if (!empty($report['admin_nama'])): ?>
+                                                            <tr><td><strong>Admin Penjadwal</strong></td><td><?php echo htmlspecialchars($report['admin_nama']); ?></td></tr>
+                                                            <?php endif; ?>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="col-md-6">
+                                                <div class="card">
+                                                    <div class="card-header bg-light">
+                                                        <h6 class="mb-0"><i class="fas fa-file-alt me-2"></i>Data Laporan</h6>
+                                                    </div>
+                                                    <div class="card-body">
+                                                        <table class="table table-sm table-borderless">
+                                                            <tr><td width="40%"><strong>Kode Laporan</strong></td><td><?php echo htmlspecialchars($report['kode_laporan'] ?? '-'); ?></td></tr>
+                                                            <tr><td><strong>Tanggal Laporan</strong></td><td><?php echo $report_date; ?></td></tr>
+                                                            <tr><td><strong>Jam Mulai</strong></td><td><?php echo $jam_mulai; ?></td></tr>
+                                                            <tr><td><strong>Jam Selesai</strong></td><td><?php echo $jam_selesai; ?></td></tr>
+                                                            <?php if ($rating > 0): ?>
+                                                            <tr><td><strong>Rating Customer</strong></td><td>
+                                                                <div class="rating-stars"><?php echo $stars; ?></div>
+                                                            </td></tr>
+                                                            <?php endif; ?>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <?php if (!empty($report['bahan_digunakan'])): ?>
+                                        <div class="card mb-4">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="fas fa-flask me-2"></i>Bahan Digunakan</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <?php echo nl2br(htmlspecialchars($report['bahan_digunakan'])); ?>
+                                            </div>
+                                        </div>
+                                        <?php endif; ?>
+                                        
+                                        <div class="card mb-4">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>Keterangan Pekerjaan</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <?php echo nl2br(htmlspecialchars($report['keterangan'])); ?>
+                                            </div>
+                                        </div>
+                                        
+                                        <?php if (!empty($report['hasil_pengamatan'])): ?>
+                                        <div class="card mb-4">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="fas fa-binoculars me-2"></i>Hasil Pengamatan</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <?php echo nl2br(htmlspecialchars($report['hasil_pengamatan'])); ?>
+                                            </div>
+                                        </div>
+                                        <?php endif; ?>
+                                        
+                                        <?php if (!empty($report['rekomendasi'])): ?>
+                                        <div class="card mb-4">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="fas fa-lightbulb me-2"></i>Rekomendasi</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <?php echo nl2br(htmlspecialchars($report['rekomendasi'])); ?>
+                                            </div>
+                                        </div>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="modal-footer">
                                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                                        <button type="button" class="btn btn-primary" onclick="window.print()">
+                                            <i class="fas fa-print me-2"></i>Print
+                                        </button>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     <?php endforeach; ?>
-                </div>
-                
-                <?php if ($totalPages > 1): ?>
-                    <nav class="mt-4">
-                        <ul class="pagination justify-content-center">
-                            <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                                <li class="page-item <?php echo $i == $page ? 'active' : ''; ?>">
-                                    <a class="page-link" href="?page=<?php echo $i; ?><?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>"><?php echo $i; ?></a>
-                                </li>
-                            <?php endfor; ?>
-                        </ul>
-                    </nav>
                 <?php endif; ?>
-            <?php endif; ?>
+            </div>
         </main>
     </div>
 </div>
 
-<?php
-require_once 'includes/footer.php';
-?>
+<!-- Modal Foto Single -->
+<div class="modal fade" id="photoModal" tabindex="-1" aria-labelledby="photoModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="photoModalLabel">Foto Dokumentasi</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="modalPhoto" src="" alt="Foto" class="img-fluid rounded modal-photo">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                <a id="downloadPhoto" href="#" class="btn btn-primary" download>
+                    <i class="fas fa-download me-2"></i>Download
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Foto Gallery -->
+<div class="modal fade" id="photoGalleryModal" tabindex="-1" aria-labelledby="photoGalleryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="photoGalleryModalLabel">Semua Foto Dokumentasi</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row" id="galleryContainer">
+                    <!-- Photos will be loaded here -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<?php require_once 'includes/footer.php'; ?>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    // Modal Foto Single
+    const photoModal = document.getElementById('photoModal');
+    if (photoModal) {
+        photoModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const photoSrc = button.getAttribute('data-photo-src');
+            const photoTitle = button.getAttribute('data-photo-title') || 'Foto Dokumentasi';
+            const modalPhoto = document.getElementById('modalPhoto');
+            const modalTitle = document.getElementById('photoModalLabel');
+            const downloadLink = document.getElementById('downloadPhoto');
+            
+            modalPhoto.src = photoSrc;
+            modalTitle.textContent = photoTitle;
+            downloadLink.href = photoSrc;
+            downloadLink.download = photoTitle.toLowerCase().replace(/ /g, '_') + '.jpg';
+        });
+    }
+    
+    // Modal Foto Gallery
+    const galleryModal = document.getElementById('photoGalleryModal');
+    if (galleryModal) {
+        galleryModal.addEventListener('show.bs.modal', function(event) {
+            const button = event.relatedTarget;
+            const photosData = JSON.parse(button.getAttribute('data-photos'));
+            const galleryContainer = document.getElementById('galleryContainer');
+            
+            galleryContainer.innerHTML = '';
+            
+            // Add photos to gallery
+            const photoTypes = [
+                {key: 'sebelum', title: 'Foto Sebelum'},
+                {key: 'sesudah', title: 'Foto Sesudah'},
+                {key: 'bukti', title: 'Foto Bukti'}
+            ];
+            
+            photoTypes.forEach(type => {
+                if (photosData[type.key]) {
+                    const col = document.createElement('div');
+                    col.className = 'col-md-4 mb-3';
+                    col.innerHTML = `
+                        <div class="card">
+                            <div class="card-header">
+                                <h6 class="mb-0">${type.title}</h6>
+                            </div>
+                            <div class="card-body text-center">
+                                <img src="${photosData[type.key]}" 
+                                     alt="${type.title}" 
+                                     class="img-fluid rounded mb-2"
+                                     style="max-height: 200px; cursor: pointer"
+                                     onclick="viewSinglePhoto('${photosData[type.key]}', '${type.title}')">
+                                <div>
+                                    <a href="${photosData[type.key]}" 
+                                       class="btn btn-sm btn-outline-primary"
+                                       download="${type.title.toLowerCase().replace(/ /g, '_')}.jpg">
+                                        <i class="fas fa-download me-1"></i>Download
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    galleryContainer.appendChild(col);
+                }
+            });
+        });
+    }
+    
+    // Validasi tanggal filter
+    const dateFrom = document.getElementById('filter_date_from');
+    const dateTo = document.getElementById('filter_date_to');
+    
+    if (dateFrom && dateTo) {
+        dateFrom.addEventListener('change', function() {
+            if (dateTo.value && this.value > dateTo.value) {
+                alert('Tanggal "Dari" tidak boleh lebih besar dari tanggal "Sampai"');
+                this.value = '';
+            }
+        });
+        
+        dateTo.addEventListener('change', function() {
+            if (dateFrom.value && this.value < dateFrom.value) {
+                alert('Tanggal "Sampai" tidak boleh lebih kecil dari tanggal "Dari"');
+                this.value = '';
+            }
+        });
+    }
+});
+
+// Function to view single photo from gallery
+function viewSinglePhoto(src, title) {
+    const modal = new bootstrap.Modal(document.getElementById('photoModal'));
+    const modalPhoto = document.getElementById('modalPhoto');
+    const modalTitle = document.getElementById('photoModalLabel');
+    const downloadLink = document.getElementById('downloadPhoto');
+    
+    modalPhoto.src = src;
+    modalTitle.textContent = title;
+    downloadLink.href = src;
+    downloadLink.download = title.toLowerCase().replace(/ /g, '_') + '.jpg';
+    
+    modal.show();
+}
+</script>
+
+</body>
+</html>

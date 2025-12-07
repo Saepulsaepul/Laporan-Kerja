@@ -1,23 +1,41 @@
 <?php
-// Konfigurasi Database
-define('DB_HOST', 'localhost');
-define('DB_USER', 'root');
-define('DB_PASS', '');
-define('DB_NAME', 'website_pelaporan');
+// ===============================
+// KONFIGURASI DATABASE (DOCKER)
+// ===============================
 
-// Membuat koneksi database
+define('DB_HOST', 'db');               // Nama service mysql di docker-compose
+define('DB_PORT', '3306');             // Port internal antar container
+define('DB_USER', 'root');             // User sesuai docker-compose
+define('DB_PASS', 'root');             // Password sesuai docker-compose
+define('DB_NAME', 'website_pelaporan'); // Nama database
+
+// ===============================
+// MEMBUAT KONEKSI PDO
+// ===============================
 function getConnection() {
     try {
-        $pdo = new PDO("mysql:host=" . DB_HOST . ";dbname=" . DB_NAME, DB_USER, DB_PASS);
+        // DSN koneksi ke MySQL
+        $dsn = "mysql:host=" . DB_HOST . ";port=" . DB_PORT . ";dbname=" . DB_NAME . ";charset=utf8";
+
+        // Buat PDO
+        $pdo = new PDO($dsn, DB_USER, DB_PASS);
+
+        // Mode error
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        // Mode fetch: associative array
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
         return $pdo;
-    } catch(PDOException $e) {
+
+    } catch (PDOException $e) {
         die("Connection failed: " . $e->getMessage());
     }
 }
 
-// Test koneksi
+// ===============================
+// TEST KONEKSI
+// ===============================
 function testConnection() {
     try {
         $pdo = getConnection();
@@ -26,4 +44,3 @@ function testConnection() {
         return false;
     }
 }
-
