@@ -533,7 +533,7 @@ require_once 'includes/header.php';
                                                 <?= htmlspecialchars(substr($report['keterangan'] ?? '', 0, 100)); ?>
                                                 <?= strlen($report['keterangan'] ?? '') > 100 ? '...' : ''; ?>
                                             </p>
-                                            <?php if ($report['rating_customer']): ?>
+                                            <!-- <?php if ($report['rating_customer']): ?>
                                                 <div class="rating-stars mt-1">
                                                     <?php for ($i = 1; $i <= 5; $i++): ?>
                                                         <?php if ($i <= $report['rating_customer']): ?>
@@ -543,7 +543,7 @@ require_once 'includes/header.php';
                                                         <?php endif; ?>
                                                     <?php endfor; ?>
                                                 </div>
-                                            <?php endif; ?>
+                                            <?php endif; ?> -->
                                         </div>
                                     </div>
                                 <?php endforeach; ?>

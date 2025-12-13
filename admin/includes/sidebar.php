@@ -12,35 +12,35 @@
             <li class="nav-item">
                 <a class="nav-link" href="customer.php">
                     <i class="fas fa-users me-2"></i>
-                    Kelola Customer
+                    Data Customer
                 </a>
             </li>
 
             <li class="nav-item">
                 <a class="nav-link" href="users.php">
                     <i class="fas fa-user-cog me-2"></i>
-                    Kelola Pekerja Lapangan
+                    Data User
                 </a>
             </li>
 
             <li class="nav-item">
                 <a class="nav-link" href="services.php">
                     <i class="fas fa-bug me-2"></i>
-                    Kelola Layanan / Service
+                    Data Layanan 
                 </a>
             </li>
 
             <li class="nav-item">
                 <a class="nav-link" href="schedule.php">
                     <i class="fas fa-calendar-check me-2"></i>
-                    Kelola Jadwal Pekerjaan
+                   Jadwal Layanan
                 </a>
             </li>
 
             <li class="nav-item">
                 <a class="nav-link" href="reports.php">
                     <i class="fas fa-file-alt me-2"></i>
-                    Laporan Pekerjaan
+                    Laporan Hasil Layanan
                 </a>
             </li>
 

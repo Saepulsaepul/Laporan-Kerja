@@ -678,7 +678,7 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                     <div class="stats-label">Hari Ini</div>
                 </div>
             </div>
-            <div class="col-md-3 col-sm-6">
+            <!-- <div class="col-md-3 col-sm-6">
                 <?php
                 // Hitung rata-rata rating
                 try {
@@ -700,7 +700,7 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                     <div class="stats-value"><?php echo $avg_rating; ?>/5</div>
                     <div class="stats-label">Rating Rata-rata</div>
                 </div>
-            </div>
+            </div> -->
         </div>
 
         <!-- Filter Section -->
@@ -866,12 +866,12 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                                 </div>
                                 
                                 <div class="report-actions">
-                                    <?php if ($report['rating_customer']): ?>
+                                    <!-- <?php if ($report['rating_customer']): ?>
                                         <div class="me-2">
                                             <?php echo displayRating($report['rating_customer']); ?>
                                         </div>
                                     <?php endif; ?>
-                                    
+                                     -->
                                     <a href="view_report.php?id=<?php echo $report['id']; ?>" 
                                        class="btn btn-sm btn-outline-custom" title="Lihat Detail">
                                         <i class="fas fa-eye"></i>

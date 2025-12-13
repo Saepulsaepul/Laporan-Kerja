@@ -762,7 +762,7 @@ function generateKodeLaporan($pdo) {
                                   rows="3"><?php echo htmlspecialchars($_POST['rekomendasi'] ?? ''); ?></textarea>
                     </div>
                     
-                    <div class="mb-3">
+                    <!-- <div class="mb-3">
                         <label class="form-label">Rating Customer (1-5)</label>
                         <div class="rating-stars" id="ratingStars">
                             <?php for ($i = 1; $i <= 5; $i++): ?>
@@ -771,7 +771,7 @@ function generateKodeLaporan($pdo) {
                         </div>
                         <input type="hidden" name="rating_customer" id="ratingInput" value="<?php echo $_POST['rating_customer'] ?? 5; ?>">
                         <small class="text-muted">Klik bintang untuk memberikan rating (opsional)</small>
-                    </div>
+                    </div> -->
                 </div>
                 
                 <!-- Section 3: Bukti Foto -->

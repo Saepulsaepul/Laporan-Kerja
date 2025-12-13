@@ -68,17 +68,44 @@ if (isset($_GET['delete'])) {
 // Ambil data laporan dengan filter (sesuai struktur database yang ada)
 try {
     $query = "SELECT r.*, 
-              u.nama as pekerja_nama, u.username as pekerja_username, u.jabatan as pekerja_jabatan,
-              c.nama_perusahaan, c.nama_customer, c.telepon as customer_telepon,
-              j.tanggal as jadwal_tanggal, j.jam as jadwal_jam, j.lokasi as jadwal_lokasi,
-              s.nama_service, s.kode_service,
+              u.nama as pekerja_nama, 
+              u.username as pekerja_username, 
+              u.jabatan as pekerja_jabatan,
+              
+              -- PRIORITAS: customer dari jadwal jika customer_id di reports NULL
+              COALESCE(c1.nama_perusahaan, c2.nama_perusahaan) as nama_perusahaan,
+              COALESCE(c1.nama_customer, c2.nama_customer) as nama_customer,
+              COALESCE(c1.telepon, c2.telepon) as customer_telepon,
+              
+              j.tanggal as jadwal_tanggal, 
+              j.jam as jadwal_jam, 
+              j.lokasi as jadwal_lokasi,
+              j.customer_id as jadwal_customer_id,
+              
+              s.nama_service, 
+              s.kode_service,
               a.nama as admin_nama
+              
               FROM reports r
+              
+              -- JOIN ke users (wajib)
               LEFT JOIN users u ON r.user_id = u.id
-              LEFT JOIN customers c ON r.customer_id = c.id
+              
+              -- JOIN ke customers langsung dari reports (mungkin NULL)
+              LEFT JOIN customers c1 ON r.customer_id = c1.id
+              
+              -- JOIN ke jadwal untuk dapatkan customer_id alternatif
               LEFT JOIN jadwal j ON r.jadwal_id = j.id
+              
+              -- JOIN ke customers melalui jadwal
+              LEFT JOIN customers c2 ON j.customer_id = c2.id
+              
+              -- JOIN ke services melalui jadwal
               LEFT JOIN services s ON j.service_id = s.id
+              
+              -- JOIN ke admin
               LEFT JOIN admin_users a ON j.admin_id = a.id
+              
               WHERE 1=1";
     
     $params = [];
@@ -128,6 +155,66 @@ try {
 }
 
 $pageTitle = 'Laporan Pekerjaan';
+
+// ========== HELPER FUNCTIONS ==========
+function safe_html($value, $default = 'N/A') {
+    if ($value === null || $value === '') {
+        $value = $default;
+    }
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function safe_nl2br($value, $default = '-') {
+    if ($value === null || trim($value) === '') {
+        return $default;
+    }
+    return nl2br(htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8'));
+}
+
+function format_time_safe($time) {
+    if (empty($time) || $time === '00:00:00' || $time === '0000-00-00 00:00:00') {
+        return '-';
+    }
+    try {
+        return date('H:i', strtotime($time));
+    } catch (Exception $e) {
+        return '-';
+    }
+}
+
+function format_date_safe($date) {
+    if (empty($date) || $date === '0000-00-00') {
+        return '-';
+    }
+    try {
+        require_once '../includes/functions.php';
+        return formatTanggalIndonesia($date);
+    } catch (Exception $e) {
+        return date('d/m/Y', strtotime($date));
+    }
+}
+
+function get_photo_path($filename, $upload_dir = '../assets/uploads/') {
+    if (empty($filename)) {
+        return '';
+    }
+    $path = $upload_dir . $filename;
+    return file_exists($path) ? $path : '';
+}
+
+function get_service_badge($service_name, $service_code) {
+    if (empty($service_name)) {
+        return '<span class="service-badge"><i class="fas fa-concierge-bell me-1"></i>N/A</span>';
+    }
+    
+    $badge = '<span class="service-badge"><i class="fas fa-concierge-bell me-1"></i>' . safe_html($service_name);
+    if (!empty($service_code)) {
+        $badge .= ' <small>(' . safe_html($service_code) . ')</small>';
+    }
+    $badge .= '</span>';
+    return $badge;
+}
+// ======================================
 
 require_once 'includes/header.php';
 ?>
@@ -279,6 +366,12 @@ require_once 'includes/header.php';
         margin-bottom: 5px;
         font-size: 0.9rem;
     }
+    .text-truncate-2 {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
 </style>
 
 <?php
@@ -299,13 +392,13 @@ require_once 'includes/navbar.php';
 
             <?php if ($success): ?>
             <div class="alert alert-success alert-dismissible fade show" role="alert">
-                <i class="fas fa-check-circle me-2"></i><?php echo htmlspecialchars($success); ?>
+                <i class="fas fa-check-circle me-2"></i><?php echo safe_html($success); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
             <?php endif; ?>
             <?php if ($error): ?>
             <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="fas fa-exclamation-triangle me-2"></i><?php echo htmlspecialchars($error); ?>
+                <i class="fas fa-exclamation-triangle me-2"></i><?php echo safe_html($error); ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
             <?php endif; ?>
@@ -337,7 +430,12 @@ require_once 'includes/navbar.php';
                     </div>
                     <div class="col-md-4">
                         <div class="d-flex align-items-center">
+                            <div class="bg-white rounded-circle p-3 me-3">
+                                <i class="fas fa-calendar-check text-warning fa-2x"></i>
+                            </div>
                             <div>
+                                <h3 class="mb-0 fw-bold"><?php echo date('d/m/Y'); ?></h3>
+                                <p class="mb-0 opacity-75">Tanggal Hari Ini</p>
                             </div>
                         </div>
                     </div>
@@ -351,21 +449,21 @@ require_once 'includes/navbar.php';
                     <div class="col-md-3">
                         <label for="filter_date_from" class="form-label">Dari Tanggal</label>
                         <input type="date" class="form-control" id="filter_date_from" name="date_from" 
-                               value="<?php echo htmlspecialchars($filter_date_from); ?>">
+                               value="<?php echo safe_html($filter_date_from); ?>">
                     </div>
                     <div class="col-md-3">
                         <label for="filter_date_to" class="form-label">Sampai Tanggal</label>
                         <input type="date" class="form-control" id="filter_date_to" name="date_to" 
-                               value="<?php echo htmlspecialchars($filter_date_to); ?>">
+                               value="<?php echo safe_html($filter_date_to); ?>">
                     </div>
                     <div class="col-md-3">
                         <label for="filter_pekerja_id" class="form-label">Pekerja</label>
                         <select class="form-select" id="filter_pekerja_id" name="pekerja_id">
                             <option value="">Semua Pekerja</option>
                             <?php foreach ($workers as $worker): ?>
-                                <option value="<?php echo $worker['id']; ?>" 
+                                <option value="<?php echo safe_html($worker['id']); ?>" 
                                         <?php echo $filter_pekerja_id == $worker['id'] ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($worker['nama']); ?> (<?php echo htmlspecialchars($worker['username']); ?>)
+                                    <?php echo safe_html($worker['nama']); ?> (<?php echo safe_html($worker['username']); ?>)
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -373,7 +471,7 @@ require_once 'includes/navbar.php';
                     <div class="col-md-3">
                         <label for="search" class="form-label">Cari</label>
                         <input type="text" class="form-control" id="search" name="search" 
-                               placeholder="Cari perusahaan/customer/layanan..." value="<?php echo htmlspecialchars($search); ?>">
+                               placeholder="Cari perusahaan/customer/layanan..." value="<?php echo safe_html($search); ?>">
                     </div>
                     <div class="col-12">
                         <div class="d-flex">
@@ -403,45 +501,43 @@ require_once 'includes/navbar.php';
                         </div>
                     </div>
                 <?php else: 
-                    foreach ($reports as $report): 
-                        $report_date = formatTanggalIndonesia($report['tanggal_pelaporan']);
-                        $jam_mulai = $report['jam_mulai'] ? date('H:i', strtotime($report['jam_mulai'])) : '-';
-                        $jam_selesai = $report['jam_selesai'] ? date('H:i', strtotime($report['jam_selesai'])) : '-';
-                        $jadwal_date = $report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) : '-';
-                        $jadwal_time = $report['jadwal_jam'] ? date('H:i', strtotime($report['jadwal_jam'])) : '-';
+                    foreach ($reports as $index => $report): 
+                        $report_date = format_date_safe($report['tanggal_pelaporan'] ?? '');
+                        $jam_mulai = format_time_safe($report['jam_mulai'] ?? '');
+                        $jam_selesai = format_time_safe($report['jam_selesai'] ?? '');
+                        $jadwal_date = format_date_safe($report['jadwal_tanggal'] ?? '');
+                        $jadwal_time = format_time_safe($report['jadwal_jam'] ?? '');
                         
-                        // Path foto
+                        // Path foto dengan validasi
                         $upload_dir = '../assets/uploads/';
-                        $foto_bukti_path = $report['foto_bukti'] ? $upload_dir . $report['foto_bukti'] : '';
-                        $foto_sebelum_path = $report['foto_sebelum'] ? $upload_dir . $report['foto_sebelum'] : '';
-                        $foto_sesudah_path = $report['foto_sesudah'] ? $upload_dir . $report['foto_sesudah'] : '';
+                        $foto_bukti_path = get_photo_path($report['foto_bukti'] ?? '', $upload_dir);
+                        $foto_sebelum_path = get_photo_path($report['foto_sebelum'] ?? '', $upload_dir);
+                        $foto_sesudah_path = get_photo_path($report['foto_sesudah'] ?? '', $upload_dir);
                         
-                        $has_foto_bukti = !empty($report['foto_bukti']) && file_exists($foto_bukti_path);
-                        $has_foto_sebelum = !empty($report['foto_sebelum']) && file_exists($foto_sebelum_path);
-                        $has_foto_sesudah = !empty($report['foto_sesudah']) && file_exists($foto_sesudah_path);
+                        $has_foto_bukti = !empty($foto_bukti_path);
+                        $has_foto_sebelum = !empty($foto_sebelum_path);
+                        $has_foto_sesudah = !empty($foto_sesudah_path);
                         $has_any_photo = $has_foto_bukti || $has_foto_sebelum || $has_foto_sesudah;
                         
                         // Rating stars
-                        // $rating = $report['rating_customer'] ?? 0;
-                        // $stars = str_repeat('<i class="fas fa-star"></i>', $rating) . 
-                        //         str_repeat('<i class="far fa-star"></i>', 5 - $rating);
-                    ?>
+                        $rating = (int)($report['rating_customer'] ?? 0);
+                        if ($rating > 0) {
+                            $stars = str_repeat('<i class="fas fa-star"></i>', $rating) . 
+                                    str_repeat('<i class="far fa-star"></i>', 5 - $rating);
+                        } else {
+                            $stars = '<span class="text-muted">Belum ada rating</span>';
+                        }
+                ?>
                         <div class="col-lg-6 mb-4">
                             <div class="report-card">
                                 <div class="report-header">
                                     <div>
-                                        <h5 class="mb-1"><?php echo htmlspecialchars($report['nama_perusahaan']); ?></h5>
+                                        <h5 class="mb-1 text-truncate"><?php echo safe_html($report['nama_perusahaan'] ?? 'N/A'); ?></h5>
                                         <span class="company-badge">
-                                            <?php echo htmlspecialchars($report['nama_customer']); ?>
+                                            <?php echo safe_html($report['nama_customer'] ?? 'N/A'); ?>
                                         </span>
                                         <div class="mt-1">
-                                            <span class="service-badge">
-                                                <i class="fas fa-concierge-bell me-1"></i>
-                                                <?php echo htmlspecialchars($report['nama_service']); ?>
-                                                <?php if (!empty($report['kode_service'])): ?>
-                                                    <small>(<?php echo htmlspecialchars($report['kode_service']); ?>)</small>
-                                                <?php endif; ?>
-                                            </span>
+                                            <?php echo get_service_badge($report['nama_service'] ?? '', $report['kode_service'] ?? ''); ?>
                                         </div>
                                     </div>
                                     <span class="badge-date">
@@ -455,10 +551,12 @@ require_once 'includes/navbar.php';
                                         <i class="fas fa-user-tie"></i>
                                         <div>
                                             <strong>Pekerja:</strong> 
-                                            <?php echo htmlspecialchars($report['pekerja_nama']); ?>
-                                            <small class="text-muted">(<?php echo htmlspecialchars($report['pekerja_jabatan']); ?>)</small>
+                                            <?php echo safe_html($report['pekerja_nama'] ?? 'N/A'); ?>
+                                            <?php if (!empty($report['pekerja_jabatan'])): ?>
+                                                <small class="text-muted">(<?php echo safe_html($report['pekerja_jabatan']); ?>)</small>
+                                            <?php endif; ?>
                                             <br>
-                                            <small class="text-muted">@<?php echo htmlspecialchars($report['pekerja_username']); ?></small>
+                                            <small class="text-muted">@<?php echo safe_html($report['pekerja_username'] ?? 'N/A'); ?></small>
                                         </div>
                                     </div>
                                     
@@ -467,8 +565,8 @@ require_once 'includes/navbar.php';
                                         <div>
                                             <strong>Jadwal:</strong> 
                                             <?php echo $jadwal_date . ' • ' . $jadwal_time; ?>
-                                            <?php if ($report['jadwal_lokasi']): ?>
-                                                <br><small class="text-muted"><?php echo htmlspecialchars($report['jadwal_lokasi']); ?></small>
+                                            <?php if (!empty($report['jadwal_lokasi'])): ?>
+                                                <br><small class="text-muted"><?php echo safe_html($report['jadwal_lokasi']); ?></small>
                                             <?php endif; ?>
                                         </div>
                                     </div>
@@ -477,7 +575,7 @@ require_once 'includes/navbar.php';
                                         <i class="fas fa-phone"></i>
                                         <div>
                                             <strong>Kontak Customer:</strong> 
-                                            <?php echo htmlspecialchars($report['customer_telepon']); ?>
+                                            <?php echo safe_html($report['customer_telepon'] ?? 'N/A'); ?>
                                         </div>
                                     </div>
                                     
@@ -494,28 +592,36 @@ require_once 'includes/navbar.php';
                                         <?php if (!empty($report['bahan_digunakan'])): ?>
                                         <div class="timeline-item">
                                             <span>Bahan Digunakan:</span>
-                                            <strong><?php echo htmlspecialchars($report['bahan_digunakan']); ?></strong>
+                                            <strong><?php echo safe_html($report['bahan_digunakan']); ?></strong>
                                         </div>
                                         <?php endif; ?>
                                     </div>
                                     <?php endif; ?>
                                     
+                                    <?php if (!empty($report['keterangan'])): ?>
                                     <div class="report-keterangan mt-3">
                                         <h6 class="mb-2"><i class="fas fa-clipboard-check me-2"></i>Keterangan Pekerjaan:</h6>
-                                        <?php echo nl2br(htmlspecialchars($report['keterangan'])); ?>
+                                        <div class="text-truncate-2">
+                                            <?php echo safe_nl2br($report['keterangan']); ?>
+                                        </div>
                                     </div>
+                                    <?php endif; ?>
                                     
                                     <?php if (!empty($report['hasil_pengamatan'])): ?>
                                     <div class="alert alert-warning mt-3">
                                         <h6 class="mb-2"><i class="fas fa-binoculars me-2"></i>Hasil Pengamatan:</h6>
-                                        <?php echo nl2br(htmlspecialchars($report['hasil_pengamatan'])); ?>
+                                        <div class="text-truncate-2">
+                                            <?php echo safe_nl2br($report['hasil_pengamatan']); ?>
+                                        </div>
                                     </div>
                                     <?php endif; ?>
                                     
                                     <?php if (!empty($report['rekomendasi'])): ?>
                                     <div class="alert alert-info mt-3">
                                         <h6 class="mb-2"><i class="fas fa-lightbulb me-2"></i>Rekomendasi:</h6>
-                                        <?php echo nl2br(htmlspecialchars($report['rekomendasi'])); ?>
+                                        <div class="text-truncate-2">
+                                            <?php echo safe_nl2br($report['rekomendasi']); ?>
+                                        </div>
                                     </div>
                                     <?php endif; ?>
                                     
@@ -561,13 +667,13 @@ require_once 'includes/navbar.php';
                                         </div>
                                     </div>
                                     <?php endif; ?>
-                                
+                                </div>
                                 
                                 <div class="report-footer">
                                     <div class="d-flex justify-content-between align-items-center">
                                         <small class="text-muted">
                                             <i class="fas fa-hashtag me-1"></i>
-                                            Kode: <?php echo htmlspecialchars($report['kode_laporan'] ?? 'N/A'); ?>
+                                            Kode: <?php echo safe_html($report['kode_laporan'] ?? 'N/A'); ?>
                                             <?php if (!empty($report['created_at'])): ?>
                                             <br>
                                             <i class="fas fa-paper-plane me-1"></i>
@@ -579,17 +685,19 @@ require_once 'includes/navbar.php';
                                             <button type="button" class="btn btn-sm btn-outline-primary" 
                                                     data-bs-toggle="modal" 
                                                     data-bs-target="#photoGalleryModal"
-                                                    data-photos='<?php echo json_encode([
-                                                        'sebelum' => $has_foto_sebelum ? $foto_sebelum_path : null,
-                                                        'sesudah' => $has_foto_sesudah ? $foto_sesudah_path : null,
-                                                        'bukti' => $has_foto_bukti ? $foto_bukti_path : null
-                                                    ]); ?>'>
+                                                    data-photos='<?php 
+                                                        echo htmlspecialchars(json_encode([
+                                                            'sebelum' => $has_foto_sebelum ? $foto_sebelum_path : null,
+                                                            'sesudah' => $has_foto_sesudah ? $foto_sesudah_path : null,
+                                                            'bukti' => $has_foto_bukti ? $foto_bukti_path : null
+                                                        ]), ENT_QUOTES, 'UTF-8'); 
+                                                    ?>'>
                                                 <i class="fas fa-images me-1"></i>Semua Foto
                                             </button>
                                             <?php endif; ?>
                                             <button type="button" class="btn btn-sm btn-outline-info ms-1" 
                                                     data-bs-toggle="modal" 
-                                                    data-bs-target="#detailModal<?php echo $report['id']; ?>">
+                                                    data-bs-target="#detailModal<?php echo $index; ?>">
                                                 <i class="fas fa-info-circle me-1"></i>Detail
                                             </button>
                                             <a href="?delete=<?php echo $report['id']; ?>" class="btn btn-sm btn-outline-danger ms-1" 
@@ -603,7 +711,7 @@ require_once 'includes/navbar.php';
                         </div>
 
                         <!-- Modal Detail Laporan -->
-                        <div class="modal fade" id="detailModal<?php echo $report['id']; ?>" tabindex="-1" aria-hidden="true">
+                        <div class="modal fade" id="detailModal<?php echo $index; ?>" tabindex="-1" aria-hidden="true">
                             <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
                                 <div class="modal-content">
                                     <div class="modal-header bg-primary text-white">
@@ -621,9 +729,9 @@ require_once 'includes/navbar.php';
                                                     </div>
                                                     <div class="card-body">
                                                         <table class="table table-sm table-borderless">
-                                                            <tr><td width="40%"><strong>Nama</strong></td><td><?php echo htmlspecialchars($report['pekerja_nama']); ?></td></tr>
-                                                            <tr><td><strong>Username</strong></td><td><?php echo htmlspecialchars($report['pekerja_username']); ?></td></tr>
-                                                            <tr><td><strong>Jabatan</strong></td><td><?php echo htmlspecialchars($report['pekerja_jabatan']); ?></td></tr>
+                                                            <tr><td width="40%"><strong>Nama</strong></td><td><?php echo safe_html($report['pekerja_nama'] ?? 'N/A'); ?></td></tr>
+                                                            <tr><td><strong>Username</strong></td><td><?php echo safe_html($report['pekerja_username'] ?? 'N/A'); ?></td></tr>
+                                                            <tr><td><strong>Jabatan</strong></td><td><?php echo safe_html($report['pekerja_jabatan'] ?? 'N/A'); ?></td></tr>
                                                         </table>
                                                     </div>
                                                 </div>
@@ -636,9 +744,9 @@ require_once 'includes/navbar.php';
                                                     </div>
                                                     <div class="card-body">
                                                         <table class="table table-sm table-borderless">
-                                                            <tr><td width="40%"><strong>Perusahaan</strong></td><td><?php echo htmlspecialchars($report['nama_perusahaan']); ?></td></tr>
-                                                            <tr><td><strong>Nama Customer</strong></td><td><?php echo htmlspecialchars($report['nama_customer']); ?></td></tr>
-                                                            <tr><td><strong>Telepon</strong></td><td><?php echo htmlspecialchars($report['customer_telepon']); ?></td></tr>
+                                                            <tr><td width="40%"><strong>Perusahaan</strong></td><td><?php echo safe_html($report['nama_perusahaan'] ?? 'N/A'); ?></td></tr>
+                                                            <tr><td><strong>Nama Customer</strong></td><td><?php echo safe_html($report['nama_customer'] ?? 'N/A'); ?></td></tr>
+                                                            <tr><td><strong>Telepon</strong></td><td><?php echo safe_html($report['customer_telepon'] ?? 'N/A'); ?></td></tr>
                                                         </table>
                                                     </div>
                                                 </div>
@@ -653,12 +761,12 @@ require_once 'includes/navbar.php';
                                                     </div>
                                                     <div class="card-body">
                                                         <table class="table table-sm table-borderless">
-                                                            <tr><td width="40%"><strong>Layanan</strong></td><td><?php echo htmlspecialchars($report['nama_service']); ?></td></tr>
-                                                            <tr><td><strong>Kode Layanan</strong></td><td><?php echo htmlspecialchars($report['kode_service'] ?? '-'); ?></td></tr>
+                                                            <tr><td width="40%"><strong>Layanan</strong></td><td><?php echo safe_html($report['nama_service'] ?? 'N/A'); ?></td></tr>
+                                                            <tr><td><strong>Kode Layanan</strong></td><td><?php echo safe_html($report['kode_service'] ?? 'N/A'); ?></td></tr>
                                                             <tr><td><strong>Tanggal Jadwal</strong></td><td><?php echo $jadwal_date . ' ' . $jadwal_time; ?></td></tr>
-                                                            <tr><td><strong>Lokasi</strong></td><td><?php echo nl2br(htmlspecialchars($report['jadwal_lokasi'] ?? '-')); ?></td></tr>
+                                                            <tr><td><strong>Lokasi</strong></td><td><?php echo safe_nl2br($report['jadwal_lokasi'] ?? 'N/A'); ?></td></tr>
                                                             <?php if (!empty($report['admin_nama'])): ?>
-                                                            <tr><td><strong>Admin Penjadwal</strong></td><td><?php echo htmlspecialchars($report['admin_nama']); ?></td></tr>
+                                                            <tr><td><strong>Admin Penjadwal</strong></td><td><?php echo safe_html($report['admin_nama']); ?></td></tr>
                                                             <?php endif; ?>
                                                         </table>
                                                     </div>
@@ -672,14 +780,14 @@ require_once 'includes/navbar.php';
                                                     </div>
                                                     <div class="card-body">
                                                         <table class="table table-sm table-borderless">
-                                                            <tr><td width="40%"><strong>Kode Laporan</strong></td><td><?php echo htmlspecialchars($report['kode_laporan'] ?? '-'); ?></td></tr>
+                                                            <tr><td width="40%"><strong>Kode Laporan</strong></td><td><?php echo safe_html($report['kode_laporan'] ?? 'N/A'); ?></td></tr>
                                                             <tr><td><strong>Tanggal Laporan</strong></td><td><?php echo $report_date; ?></td></tr>
                                                             <tr><td><strong>Jam Mulai</strong></td><td><?php echo $jam_mulai; ?></td></tr>
                                                             <tr><td><strong>Jam Selesai</strong></td><td><?php echo $jam_selesai; ?></td></tr>
                                                             <?php if ($rating > 0): ?>
-                                                            <tr><td><strong>Rating Customer</strong></td><td>
+                                                            <!-- <tr><td><strong>Rating Customer</strong></td><td>
                                                                 <div class="rating-stars"><?php echo $stars; ?></div>
-                                                            </td></tr>
+                                                            </td></tr> -->
                                                             <?php endif; ?>
                                                         </table>
                                                     </div>
@@ -693,7 +801,7 @@ require_once 'includes/navbar.php';
                                                 <h6 class="mb-0"><i class="fas fa-flask me-2"></i>Bahan Digunakan</h6>
                                             </div>
                                             <div class="card-body">
-                                                <?php echo nl2br(htmlspecialchars($report['bahan_digunakan'])); ?>
+                                                <?php echo safe_nl2br($report['bahan_digunakan']); ?>
                                             </div>
                                         </div>
                                         <?php endif; ?>
@@ -703,7 +811,7 @@ require_once 'includes/navbar.php';
                                                 <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>Keterangan Pekerjaan</h6>
                                             </div>
                                             <div class="card-body">
-                                                <?php echo nl2br(htmlspecialchars($report['keterangan'])); ?>
+                                                <?php echo safe_nl2br($report['keterangan']); ?>
                                             </div>
                                         </div>
                                         
@@ -713,7 +821,7 @@ require_once 'includes/navbar.php';
                                                 <h6 class="mb-0"><i class="fas fa-binoculars me-2"></i>Hasil Pengamatan</h6>
                                             </div>
                                             <div class="card-body">
-                                                <?php echo nl2br(htmlspecialchars($report['hasil_pengamatan'])); ?>
+                                                <?php echo safe_nl2br($report['hasil_pengamatan']); ?>
                                             </div>
                                         </div>
                                         <?php endif; ?>
@@ -724,7 +832,51 @@ require_once 'includes/navbar.php';
                                                 <h6 class="mb-0"><i class="fas fa-lightbulb me-2"></i>Rekomendasi</h6>
                                             </div>
                                             <div class="card-body">
-                                                <?php echo nl2br(htmlspecialchars($report['rekomendasi'])); ?>
+                                                <?php echo safe_nl2br($report['rekomendasi']); ?>
+                                            </div>
+                                        </div>
+                                        <?php endif; ?>
+                                        
+                                        <?php if ($has_any_photo): ?>
+                                        <div class="card mb-4">
+                                            <div class="card-header bg-light">
+                                                <h6 class="mb-0"><i class="fas fa-camera me-2"></i>Foto Dokumentasi</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="row">
+                                                    <?php if ($has_foto_sebelum): ?>
+                                                    <div class="col-md-4 text-center mb-3">
+                                                        <h6>Sebelum</h6>
+                                                        <img src="<?php echo $foto_sebelum_path; ?>" alt="Foto Sebelum" class="img-fluid rounded mb-2" style="max-height: 150px;">
+                                                        <br>
+                                                        <a href="<?php echo $foto_sebelum_path; ?>" class="btn btn-sm btn-outline-primary" download="foto_sebelum_<?php echo $report['id']; ?>.jpg">
+                                                            <i class="fas fa-download me-1"></i>Download
+                                                        </a>
+                                                    </div>
+                                                    <?php endif; ?>
+                                                    
+                                                    <?php if ($has_foto_sesudah): ?>
+                                                    <div class="col-md-4 text-center mb-3">
+                                                        <h6>Sesudah</h6>
+                                                        <img src="<?php echo $foto_sesudah_path; ?>" alt="Foto Sesudah" class="img-fluid rounded mb-2" style="max-height: 150px;">
+                                                        <br>
+                                                        <a href="<?php echo $foto_sesudah_path; ?>" class="btn btn-sm btn-outline-primary" download="foto_sesudah_<?php echo $report['id']; ?>.jpg">
+                                                            <i class="fas fa-download me-1"></i>Download
+                                                        </a>
+                                                    </div>
+                                                    <?php endif; ?>
+                                                    
+                                                    <?php if ($has_foto_bukti): ?>
+                                                    <div class="col-md-4 text-center mb-3">
+                                                        <h6>Bukti Kerja</h6>
+                                                        <img src="<?php echo $foto_bukti_path; ?>" alt="Foto Bukti" class="img-fluid rounded mb-2" style="max-height: 150px;">
+                                                        <br>
+                                                        <a href="<?php echo $foto_bukti_path; ?>" class="btn btn-sm btn-outline-primary" download="foto_bukti_<?php echo $report['id']; ?>.jpg">
+                                                            <i class="fas fa-download me-1"></i>Download
+                                                        </a>
+                                                    </div>
+                                                    <?php endif; ?>
+                                                </div>
                                             </div>
                                         </div>
                                         <?php endif; ?>
