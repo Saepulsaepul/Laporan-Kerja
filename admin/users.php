@@ -10,6 +10,8 @@ $error = $_SESSION['error'] ?? null;
 unset($_SESSION['success'], $_SESSION['error']);
 
 $user_type = isset($_GET['type']) ? $_GET['type'] : 'workers'; // 'workers' atau 'admins'
+$search = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
+$status_filter = isset($_GET['status']) ? sanitizeInput($_GET['status']) : 'all';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
@@ -20,10 +22,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $password = $_POST['password'];
     $type = $_POST['type']; // 'worker' atau 'admin'
     
-    // Untuk pekerja saja, ambil email
+    // Untuk pekerja saja, ambil email dan jabatan
     $email = '';
+    $jabatan = '';
     if ($type === 'worker') {
         $email = filter_input(INPUT_POST, 'email', FILTER_SANITIZE_EMAIL);
+        $jabatan = sanitizeInput($_POST['jabatan'] ?? '');
     }
 
     // Validasi berbeda untuk pekerja dan admin
@@ -48,9 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $stmt = $pdo->prepare("INSERT INTO $table (username, password, nama, telepon) VALUES (?, ?, ?, ?)");
                     $stmt->execute([$username, $hashedPassword, $nama, $telepon]);
                 } else {
-                    // Pekerja: dengan email
-                    $stmt = $pdo->prepare("INSERT INTO $table (username, password, nama, email, telepon) VALUES (?, ?, ?, ?, ?)");
-                    $stmt->execute([$username, $hashedPassword, $nama, $email, $telepon]);
+                    // Pekerja: dengan email dan jabatan
+                    $stmt = $pdo->prepare("INSERT INTO $table (username, password, nama, email, telepon, jabatan) VALUES (?, ?, ?, ?, ?, ?)");
+                    $stmt->execute([$username, $hashedPassword, $nama, $email, $telepon, $jabatan]);
                 }
                 $_SESSION['success'] = ($type === 'admin' ? 'Admin' : 'Pekerja') . ' baru berhasil ditambahkan!';
             } elseif ($action === 'update' && $id) {
@@ -60,16 +64,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         $stmt = $pdo->prepare("UPDATE $table SET username = ?, password = ?, nama = ?, telepon = ? WHERE id = ?");
                         $stmt->execute([$username, $hashedPassword, $nama, $telepon, $id]);
                     } else {
-                        $stmt = $pdo->prepare("UPDATE $table SET username = ?, password = ?, nama = ?, email = ?, telepon = ? WHERE id = ?");
-                        $stmt->execute([$username, $hashedPassword, $nama, $email, $telepon, $id]);
+                        $stmt = $pdo->prepare("UPDATE $table SET username = ?, password = ?, nama = ?, email = ?, telepon = ?, jabatan = ? WHERE id = ?");
+                        $stmt->execute([$username, $hashedPassword, $nama, $email, $telepon, $jabatan, $id]);
                     }
                 } else {
                     if ($type === 'admin') {
                         $stmt = $pdo->prepare("UPDATE $table SET username = ?, nama = ?, telepon = ? WHERE id = ?");
                         $stmt->execute([$username, $nama, $telepon, $id]);
                     } else {
-                        $stmt = $pdo->prepare("UPDATE $table SET username = ?, nama = ?, email = ?, telepon = ? WHERE id = ?");
-                        $stmt->execute([$username, $nama, $email, $telepon, $id]);
+                        $stmt = $pdo->prepare("UPDATE $table SET username = ?, nama = ?, email = ?, telepon = ?, jabatan = ? WHERE id = ?");
+                        $stmt->execute([$username, $nama, $email, $telepon, $jabatan, $id]);
                     }
                 }
                 $_SESSION['success'] = 'Data ' . ($type === 'admin' ? 'admin' : 'pekerja') . ' berhasil diperbarui!';
@@ -82,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             }
         }
     }
-    header("Location: users.php?type=" . $type . "s");
+    header("Location: users.php?type=" . $type . "s" . (!empty($search) ? "&search=" . urlencode($search) : ""));
     exit();
 }
 
@@ -118,20 +122,81 @@ if (isset($_GET['delete'])) {
     } catch (PDOException $e) {
         $_SESSION['error'] = 'Gagal menghapus ' . ($type === 'admin' ? 'admin' : 'pekerja') . ': ' . $e->getMessage();
     }
-    header("Location: users.php?type=" . ($type === 'admin' ? 'admins' : 'workers'));
+    header("Location: users.php?type=" . ($type === 'admin' ? 'admins' : 'workers') . (!empty($search) ? "&search=" . urlencode($search) : ""));
+    exit();
+}
+
+// Toggle status pekerja
+if (isset($_GET['toggle_status'])) {
+    $id = (int)$_GET['toggle_status'];
+    $type = isset($_GET['user_type']) ? $_GET['user_type'] : 'worker';
+    
+    if ($type === 'worker') {
+        try {
+            // Dapatkan status saat ini
+            $stmt = $pdo->prepare("SELECT status FROM users WHERE id = ?");
+            $stmt->execute([$id]);
+            $current_status = $stmt->fetchColumn();
+            
+            $new_status = ($current_status === 'Aktif') ? 'Nonaktif' : 'Aktif';
+            
+            $update_stmt = $pdo->prepare("UPDATE users SET status = ? WHERE id = ?");
+            $update_stmt->execute([$new_status, $id]);
+            
+            $_SESSION['success'] = "Status pekerja berhasil diubah menjadi $new_status!";
+            
+        } catch (PDOException $e) {
+            $_SESSION['error'] = 'Gagal mengubah status: ' . $e->getMessage();
+        }
+    }
+    header("Location: users.php?type=workers" . (!empty($search) ? "&search=" . urlencode($search) : ""));
     exit();
 }
 
 try {
-    // Ambil data berdasarkan tipe
+    // Build query berdasarkan tipe
     if ($user_type === 'admins') {
-        // Admin: tidak ada kolom email
-        $stmt = $pdo->query("SELECT id, username, nama, telepon, created_at FROM admin_users ORDER BY nama ASC");
+        // Query untuk admin
+        $sql = "SELECT id, username, nama, telepon, created_at FROM admin_users WHERE 1=1";
+        $params = [];
+        
+        if (!empty($search)) {
+            $sql .= " AND (nama LIKE ? OR username LIKE ? OR telepon LIKE ?)";
+            $search_term = "%$search%";
+            $params[] = $search_term;
+            $params[] = $search_term;
+            $params[] = $search_term;
+        }
+        
+        $sql .= " ORDER BY nama ASC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $user_role = 'Admin';
     } else {
-        // Pekerja: ada kolom email
-        $stmt = $pdo->query("SELECT id, username, nama, email, telepon, jabatan, status, created_at FROM users ORDER BY nama ASC");
+        // Query untuk pekerja dengan filter tambahan
+        $sql = "SELECT id, username, nama, email, telepon, jabatan, status, created_at FROM users WHERE 1=1";
+        $params = [];
+        
+        if (!empty($search)) {
+            $sql .= " AND (nama LIKE ? OR username LIKE ? OR email LIKE ? OR telepon LIKE ? OR jabatan LIKE ?)";
+            $search_term = "%$search%";
+            $params[] = $search_term;
+            $params[] = $search_term;
+            $params[] = $search_term;
+            $params[] = $search_term;
+            $params[] = $search_term;
+        }
+        
+        if ($status_filter !== 'all') {
+            $sql .= " AND status = ?";
+            $params[] = $status_filter;
+        }
+        
+        $sql .= " ORDER BY FIELD(status, 'Aktif', 'Nonaktif'), nama ASC";
+        
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $user_role = 'Pekerja';
     }
@@ -140,10 +205,19 @@ try {
     $total_workers = $pdo->query("SELECT COUNT(*) FROM users WHERE status = 'Aktif'")->fetchColumn();
     $total_admins = $pdo->query("SELECT COUNT(*) FROM admin_users")->fetchColumn();
     
+    // Hitung statistik pencarian
+    $total_results = count($users);
+    
+    // Get status counts for workers
+    if ($user_type === 'workers') {
+        $status_counts = $pdo->query("SELECT status, COUNT(*) as count FROM users GROUP BY status")->fetchAll(PDO::FETCH_ASSOC);
+    }
+    
 } catch (PDOException $e) {
     $error = "Gagal mengambil data: " . $e->getMessage();
     $users = [];
     $total_workers = $total_admins = 0;
+    $total_results = 0;
 }
 
 $pageTitle = 'Kelola Pengguna';
@@ -161,6 +235,7 @@ require_once 'includes/header.php';
         flex-direction: column;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
         height: 100%;
+        overflow: hidden;
     }
     .user-card:hover {
         transform: translateY(-5px);
@@ -228,24 +303,36 @@ require_once 'includes/header.php';
         border-bottom-left-radius: 16px;
         border-bottom-right-radius: 16px;
         border-top: 1px solid #e9ecef;
+        display: flex;
+        gap: 0.5rem;
+    }
+    .user-card-footer .btn-group {
+        flex: 1;
+    }
+    .user-card-footer .btn-group .btn {
+        flex: 1;
     }
     .empty-state-container {
         background-color: #f8f9fa;
         padding: 4rem;
         border-radius: 12px;
         border: 1px dashed #dee2e6;
+        text-align: center;
     }
-    .modal-header {
-        background-color: #f8f9fa;
+    .search-card {
+        background-color: #fff;
+        border: 1px solid #e9ecef;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
     }
-    .nav-pills .nav-link {
+    .search-results-info {
+        background-color: #e7f5ff;
         border-radius: 8px;
-        padding: 0.75rem 1.5rem;
-        margin: 0 0.25rem;
-        font-weight: 500;
-    }
-    .nav-pills .nav-link.active {
-        box-shadow: 0 2px 8px rgba(13, 110, 253, 0.25);
+        padding: 0.75rem 1rem;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
     }
     .stats-card {
         background: linear-gradient(135deg, #f8f9fa, #e9ecef);
@@ -299,6 +386,48 @@ require_once 'includes/header.php';
     .status-nonaktif {
         background-color: #f8d7da;
         color: #721c24;
+    }
+    .filter-badge {
+        font-size: 0.8rem;
+        padding: 0.3rem 0.7rem;
+        border-radius: 50px;
+        margin-right: 0.5rem;
+        margin-bottom: 0.5rem;
+        display: inline-block;
+    }
+    .filter-active {
+        background-color: #e7f5ff;
+        color: #0c63e4;
+        border: 1px solid #0c63e4;
+    }
+    .filter-inactive {
+        background-color: #f8f9fa;
+        color: #6c757d;
+        border: 1px solid #dee2e6;
+    }
+    .search-highlight {
+        background-color: #fff3cd;
+        padding: 0 0.2rem;
+        border-radius: 3px;
+        font-weight: 600;
+    }
+    .action-buttons {
+        display: flex;
+        gap: 0.5rem;
+        margin-top: 0.5rem;
+    }
+    .action-buttons .btn {
+        flex: 1;
+        font-size: 0.85rem;
+    }
+    .status-filter-group {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    .status-filter-group .btn {
+        font-size: 0.85rem;
+        padding: 0.4rem 0.8rem;
     }
 </style>
 
@@ -355,16 +484,111 @@ require_once 'includes/navbar.php';
                 </div>
             </div>
 
+            <!-- Search Card -->
+            <div class="search-card">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <form method="GET" action="users.php" class="row g-2">
+                            <div class="col-md-8">
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="fas fa-search"></i></span>
+                                    <input type="text" class="form-control" name="search" 
+                                           placeholder="Cari nama, username, email, telepon, jabatan..." 
+                                           value="<?php echo htmlspecialchars($search); ?>">
+                                    <input type="hidden" name="type" value="<?php echo $user_type; ?>">
+                                    <button class="btn btn-primary" type="submit">Cari</button>
+                                </div>
+                            </div>
+                            <?php if ($user_type === 'workers'): ?>
+                            <div class="col-md-4">
+                                <div class="status-filter-group">
+                                    <a href="?type=workers<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>" 
+                                       class="btn btn-outline-secondary <?php echo $status_filter === 'all' ? 'active' : ''; ?>">
+                                        Semua
+                                    </a>
+                                    <a href="?type=workers&status=Aktif<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>" 
+                                       class="btn btn-outline-success <?php echo $status_filter === 'Aktif' ? 'active' : ''; ?>">
+                                        Aktif
+                                    </a>
+                                    <a href="?type=workers&status=Nonaktif<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>" 
+                                       class="btn btn-outline-danger <?php echo $status_filter === 'Nonaktif' ? 'active' : ''; ?>">
+                                        Nonaktif
+                                    </a>
+                                </div>
+                            </div>
+                            <?php endif; ?>
+                        </form>
+                    </div>
+                    <div class="col-md-4 text-md-end">
+                        <a href="users.php?type=<?php echo $user_type; ?>" class="btn btn-outline-secondary">
+                            <i class="fas fa-redo me-1"></i>Reset Filter
+                        </a>
+                    </div>
+                </div>
+                
+                <!-- Search Results Info -->
+                <?php if (!empty($search) || $status_filter !== 'all'): ?>
+                <div class="search-results-info mt-3">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="fas fa-info-circle me-2"></i>
+                            Menampilkan <strong><?php echo $total_results; ?></strong> hasil 
+                            <?php if (!empty($search)): ?>
+                                untuk pencarian "<strong><?php echo htmlspecialchars($search); ?></strong>"
+                            <?php endif; ?>
+                            <?php if ($status_filter !== 'all'): ?>
+                                dengan status <strong><?php echo $status_filter; ?></strong>
+                            <?php endif; ?>
+                        </div>
+                        <?php if (!empty($search)): ?>
+                        <div>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="clearSearch()">
+                                <i class="fas fa-times me-1"></i>Hapus Pencarian
+                            </button>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                
+                <!-- Status Counts for Workers -->
+                <?php if ($user_type === 'workers' && isset($status_counts) && empty($search)): ?>
+                <div class="mt-3">
+                    <div class="d-flex flex-wrap">
+                        <?php 
+                        $total_all = 0;
+                        foreach ($status_counts as $status_count): 
+                            $total_all += $status_count['count'];
+                        ?>
+                        <a href="?type=workers&status=<?php echo $status_count['status']; ?>" 
+                           class="filter-badge <?php echo $status_filter === $status_count['status'] ? 'filter-active' : 'filter-inactive'; ?>">
+                            <?php echo $status_count['status']; ?>: <strong><?php echo $status_count['count']; ?></strong>
+                        </a>
+                        <?php endforeach; ?>
+                        <a href="?type=workers" class="filter-badge <?php echo $status_filter === 'all' ? 'filter-active' : 'filter-inactive'; ?>">
+                            Semua: <strong><?php echo $total_all; ?></strong>
+                        </a>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
+
             <!-- Tabs untuk memilih tipe user -->
             <ul class="nav nav-pills mb-4 justify-content-center">
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $user_type === 'workers' ? 'active' : ''; ?>" href="?type=workers">
+                    <a class="nav-link <?php echo $user_type === 'workers' ? 'active' : ''; ?>" href="?type=workers<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>">
                         <i class="fas fa-user-tie me-2"></i>Pekerja
+                        <?php if ($user_type === 'workers' && isset($total_results)): ?>
+                        <span class="badge bg-primary ms-1"><?php echo $total_results; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link <?php echo $user_type === 'admins' ? 'active' : ''; ?>" href="?type=admins">
+                    <a class="nav-link <?php echo $user_type === 'admins' ? 'active' : ''; ?>" href="?type=admins<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>">
                         <i class="fas fa-user-shield me-2"></i>Admin
+                        <?php if ($user_type === 'admins' && isset($total_results)): ?>
+                        <span class="badge bg-success ms-1"><?php echo $total_results; ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
             </ul>
@@ -375,18 +599,47 @@ require_once 'includes/navbar.php';
                         <div class="text-center empty-state-container">
                             <?php if ($user_type === 'admins'): ?>
                                 <i class="fas fa-user-shield fa-4x text-muted mb-4"></i>
-                                <h4 class="text-dark fw-bold">Belum Ada Admin</h4>
-                                <p class="text-muted">Tekan tombol "Tambah Admin" untuk menambahkan admin baru.</p>
+                                <h4 class="text-dark fw-bold">
+                                    <?php echo !empty($search) ? 'Admin Tidak Ditemukan' : 'Belum Ada Admin'; ?>
+                                </h4>
+                                <p class="text-muted">
+                                    <?php echo !empty($search) 
+                                        ? 'Tidak ditemukan admin dengan kata kunci "' . htmlspecialchars($search) . '"' 
+                                        : 'Tekan tombol "Tambah Admin" untuk menambahkan admin baru.'; ?>
+                                </p>
                             <?php else: ?>
                                 <i class="fas fa-user-slash fa-4x text-muted mb-4"></i>
-                                <h4 class="text-dark fw-bold">Belum Ada Pekerja</h4>
-                                <p class="text-muted">Tekan tombol "Tambah Pekerja" untuk menambahkan pekerja baru.</p>
+                                <h4 class="text-dark fw-bold">
+                                    <?php echo !empty($search) || $status_filter !== 'all' ? 'Pekerja Tidak Ditemukan' : 'Belum Ada Pekerja'; ?>
+                                </h4>
+                                <p class="text-muted">
+                                    <?php if (!empty($search)): ?>
+                                        Tidak ditemukan pekerja dengan kata kunci "<?php echo htmlspecialchars($search); ?>"
+                                        <?php if ($status_filter !== 'all'): ?>
+                                            dan status "<?php echo $status_filter; ?>"
+                                        <?php endif; ?>
+                                    <?php elseif ($status_filter !== 'all'): ?>
+                                        Tidak ada pekerja dengan status "<?php echo $status_filter; ?>"
+                                    <?php else: ?>
+                                        Tekan tombol "Tambah Pekerja" untuk menambahkan pekerja baru.
+                                    <?php endif; ?>
+                                </p>
                             <?php endif; ?>
                         </div>
                     </div>
                 <?php else: 
                     $avatarColors = ['#0d6efd', '#6f42c1', '#d63384', '#198754', '#fd7e14', '#dc3545'];
                     $colorIndex = 0;
+                    
+                    // Fungsi untuk highlight teks pencarian
+                    function highlightText($text, $search) {
+                        if (empty($search) || empty($text)) {
+                            return htmlspecialchars($text);
+                        }
+                        $pattern = '/' . preg_quote($search, '/') . '/i';
+                        return preg_replace($pattern, '<span class="search-highlight">$0</span>', htmlspecialchars($text));
+                    }
+                    
                     foreach ($users as $user): 
                         $avatarColor = $avatarColors[$colorIndex % count($avatarColors)];
                         $colorIndex++;
@@ -400,7 +653,7 @@ require_once 'includes/navbar.php';
                                     </div>
                                 </div>
                                 <div class="user-card-body">
-                                    <h5 class="user-name"><?php echo htmlspecialchars($user['nama']); ?></h5>
+                                    <h5 class="user-name"><?php echo highlightText($user['nama'], $search); ?></h5>
                                     <div class="mb-3">
                                         <span class="role-badge <?php echo $user_type === 'admins' ? 'badge-admin' : 'badge-worker'; ?>">
                                             <i class="fas fa-<?php echo $user_type === 'admins' ? 'shield' : 'user-tie'; ?> me-1"></i>
@@ -413,36 +666,46 @@ require_once 'includes/navbar.php';
                                         <?php endif; ?>
                                     </div>
                                     <ul class="user-details">
-                                        <li><i class="fas fa-user fa-fw"></i><span><?php echo htmlspecialchars($user['username']); ?></span></li>
+                                        <li><i class="fas fa-user fa-fw"></i><span><?php echo highlightText($user['username'], $search); ?></span></li>
                                         <?php if ($user_type === 'workers' && !empty($user['email'])): ?>
-                                        <li><i class="fas fa-envelope fa-fw"></i><span><?php echo htmlspecialchars($user['email']); ?></span></li>
+                                        <li><i class="fas fa-envelope fa-fw"></i><span><?php echo highlightText($user['email'], $search); ?></span></li>
                                         <?php endif; ?>
-                                        <li><i class="fas fa-phone fa-fw"></i><span><?php echo htmlspecialchars($user['telepon'] ?? '-'); ?></span></li>
+                                        <li><i class="fas fa-phone fa-fw"></i><span><?php echo highlightText($user['telepon'] ?? '-', $search); ?></span></li>
                                         <?php if ($user_type === 'workers' && !empty($user['jabatan'])): ?>
-                                        <li><i class="fas fa-briefcase fa-fw"></i><span><?php echo htmlspecialchars($user['jabatan']); ?></span></li>
+                                        <li><i class="fas fa-briefcase fa-fw"></i><span><?php echo highlightText($user['jabatan'], $search); ?></span></li>
                                         <?php endif; ?>
                                         <li><i class="fas fa-calendar-alt fa-fw"></i><span>Bergabung: <?php echo formatTanggalIndonesia(date('Y-m-d', strtotime($user['created_at']))); ?></span></li>
                                     </ul>
                                 </div>
                                 <div class="user-card-footer">
-                                    <div class="btn-group w-100">
+                                    <div class="action-buttons">
                                         <button type="button" class="btn btn-sm btn-outline-primary btn-edit" 
                                                 data-id="<?php echo $user['id']; ?>" 
                                                 data-nama="<?php echo htmlspecialchars($user['nama']); ?>" 
                                                 <?php if ($user_type === 'workers'): ?>
                                                 data-email="<?php echo htmlspecialchars($user['email'] ?? ''); ?>" 
+                                                data-jabatan="<?php echo htmlspecialchars($user['jabatan'] ?? ''); ?>" 
                                                 <?php endif; ?>
                                                 data-telepon="<?php echo htmlspecialchars($user['telepon'] ?? ''); ?>" 
                                                 data-username="<?php echo htmlspecialchars($user['username']); ?>"
                                                 data-type="<?php echo $user_type === 'admins' ? 'admin' : 'worker'; ?>">
-                                            <i class="fas fa-edit me-2"></i>Edit
+                                            <i class="fas fa-edit"></i>
                                         </button>
+                                        
+                                        <?php if ($user_type === 'workers'): ?>
+                                        <a href="?toggle_status=<?php echo $user['id']; ?>&user_type=worker<?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>" 
+                                           class="btn btn-sm <?php echo $user['status'] === 'Aktif' ? 'btn-warning' : 'btn-success'; ?>"
+                                           onclick="return confirm('Ubah status pekerja menjadi <?php echo $user['status'] === 'Aktif' ? 'Nonaktif' : 'Aktif'; ?>?')">
+                                            <i class="fas fa-<?php echo $user['status'] === 'Aktif' ? 'ban' : 'check-circle'; ?>"></i>
+                                        </a>
+                                        <?php endif; ?>
+                                        
                                         <?php 
                                         // Cek ID admin yang sedang login
                                         $current_admin_id = $_SESSION['admin_id'] ?? $_SESSION['user_id'] ?? 0;
                                         if (!($user_type === 'admins' && $user['id'] == $current_admin_id)): 
                                         ?>
-                                        <a href="?delete=<?php echo $user['id']; ?>&user_type=<?php echo $user_type === 'admins' ? 'admin' : 'worker'; ?>" 
+                                        <a href="?delete=<?php echo $user['id']; ?>&user_type=<?php echo $user_type === 'admins' ? 'admin' : 'worker'; ?><?php echo !empty($search) ? '&search=' . urlencode($search) : ''; ?>" 
                                            class="btn btn-sm btn-outline-danger" 
                                            onclick="return confirm('Anda yakin ingin menghapus <?php echo $user_type === 'admins' ? 'admin' : 'pekerja'; ?> ini?')">
                                             <i class="fas fa-trash"></i>
@@ -472,6 +735,9 @@ require_once 'includes/navbar.php';
                     <input type="hidden" name="action" id="formAction" value="create">
                     <input type="hidden" name="id" id="formUserId">
                     <input type="hidden" name="type" id="formUserType" value="<?php echo $user_type === 'admins' ? 'admin' : 'worker'; ?>">
+                    
+                    <!-- Juga simpan parameter pencarian untuk redirect -->
+                    <input type="hidden" name="search_redirect" value="<?php echo htmlspecialchars($search); ?>">
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
@@ -485,9 +751,15 @@ require_once 'includes/navbar.php';
                     </div>
                     
                     <?php if ($user_type === 'workers'): ?>
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email</label>
-                        <input type="email" class="form-control" id="email" name="email" placeholder="pekerja@example.com">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="email" class="form-label">Email</label>
+                            <input type="email" class="form-control" id="email" name="email" placeholder="pekerja@example.com">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="jabatan" class="form-label">Jabatan</label>
+                            <input type="text" class="form-control" id="jabatan" name="jabatan" placeholder="Teknisi Pest Control">
+                        </div>
                     </div>
                     <?php endif; ?>
                     
@@ -509,13 +781,6 @@ require_once 'includes/navbar.php';
                             <small id="passwordHelp" class="form-text text-muted">Wajib diisi untuk pengguna baru.</small>
                         </div>
                     </div>
-                    
-                    <?php if ($user_type === 'workers'): ?>
-                    <div class="mb-3">
-                        <label for="jabatan" class="form-label">Jabatan</label>
-                        <input type="text" class="form-control" id="jabatan" name="jabatan" placeholder="Teknisi Pest Control">
-                    </div>
-                    <?php endif; ?>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
@@ -542,10 +807,11 @@ document.addEventListener("DOMContentLoaded", function() {
     const formUserType = document.getElementById('formUserType');
     const emailField = document.getElementById('email');
     const jabatanField = document.getElementById('jabatan');
+    const currentUserType = '<?php echo $user_type; ?>';
     
     function setupAddModal() {
         form.reset();
-        const isAdmin = '<?php echo $user_type === 'admins' ? 'true' : 'false'; ?>' === 'true';
+        const isAdmin = currentUserType === 'admins';
         modalTitle.textContent = 'Tambah ' + (isAdmin ? 'Admin' : 'Pekerja') + ' Baru';
         submitButton.textContent = 'Simpan';
         submitButton.classList.remove('btn-warning');
@@ -577,8 +843,9 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById('telepon').value = data.telepon || '';
         document.getElementById('username').value = data.username;
         
-        if (!isAdmin && emailField) {
-            emailField.value = data.email || '';
+        if (!isAdmin) {
+            if (emailField) emailField.value = data.email || '';
+            if (jabatanField) jabatanField.value = data.jabatan || '';
         }
         
         passwordInput.removeAttribute('required');
@@ -616,6 +883,17 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
     });
+    
+    // Fungsi untuk menghapus pencarian
+    window.clearSearch = function() {
+        window.location.href = 'users.php?type=<?php echo $user_type; ?>';
+    };
+    
+    // Fokus ke input search jika ada parameter search
+    const searchParam = new URLSearchParams(window.location.search).get('search');
+    if (searchParam) {
+        document.querySelector('input[name="search"]').focus();
+    }
 });
 </script>
 

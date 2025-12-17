@@ -145,32 +145,10 @@ if (!empty($whereClause)) {
 
 $sql .= " ORDER BY r.tanggal_pelaporan DESC, r.created_at DESC";
 
-// DEBUG: Cek query yang dihasilkan
-error_log("SQL Query: " . $sql);
-error_log("SQL Parameters: " . json_encode($params));
-
 try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // DEBUG: Cek data yang didapat
-    error_log("Total reports fetched: " . count($reports));
-    if (count($reports) > 0) {
-        $sample = $reports[0];
-        error_log("Sample report data:");
-        error_log("- Nama Perusahaan: " . ($sample['nama_perusahaan'] ?? 'NULL'));
-        error_log("- Foto Sebelum: " . ($sample['foto_sebelum'] ?? 'NULL'));
-        error_log("- Foto Sesudah: " . ($sample['foto_sesudah'] ?? 'NULL'));
-        error_log("- Foto Bukti: " . ($sample['foto_bukti'] ?? 'NULL'));
-        
-        // Cek file existence
-        $upload_dir = '../assets/uploads/';
-        if (!empty($sample['foto_sebelum'])) {
-            $path = $upload_dir . $sample['foto_sebelum'];
-            error_log("- File Sebelum exists: " . (file_exists($path) ? 'YES' : 'NO') . " at: " . $path);
-        }
-    }
     
 } catch (PDOException $e) {
     die("Error mengambil data laporan: " . $e->getMessage());
@@ -219,8 +197,8 @@ foreach ($reports as $report) {
 // --- FUNGSI UNTUK MENAMPILKAN FOTO DENGAN PERBAIKAN ---
 // ===================================================================
 function addPhotoToPDF($pdf, $photoPath, $caption, $x, $y) {
-    $maxWidth = 60; // mm - diperkecil agar muat 3 foto
-    $maxHeight = 40; // mm
+    $maxWidth = 50; // mm - diperkecil untuk A4 Portrait
+    $maxHeight = 35; // mm
     
     // Cek apakah file foto ada
     if (!file_exists($photoPath)) {
@@ -279,9 +257,6 @@ function addPhotoToPDF($pdf, $photoPath, $caption, $x, $y) {
         // Tambahkan gambar dengan quality reduction untuk mempercepat
         $pdf->Image($photoPath, $xPos, $yPos, $newWidth, $newHeight, '', '', '', false, 150, '', false, false, 0, false, false, false);
         
-        // DEBUG: Log sukses
-        error_log("Success adding photo: " . basename($photoPath));
-        
     } catch (Exception $e) {
         // Jika error saat menambahkan gambar
         $pdf->SetFont('helvetica', 'I', 8);
@@ -289,7 +264,6 @@ function addPhotoToPDF($pdf, $photoPath, $caption, $x, $y) {
         $pdf->SetXY($x, $y + ($maxHeight / 2) - 5);
         $pdf->Cell($maxWidth, 10, 'Error: ' . substr($e->getMessage(), 0, 20), 0, 0, 'C');
         $pdf->SetTextColor(0, 0, 0);
-        error_log("Error adding photo " . basename($photoPath) . ": " . $e->getMessage());
         return;
     }
     
@@ -468,12 +442,12 @@ if ($action === 'excel') {
 }
 
 // ===================================================================
-// --- MULAI PEMBUATAN PDF DENGAN FOTO ---
+// --- MULAI PEMBUATAN PDF DENGAN FOTO (A4 PORTRAIT) ---
 // ===================================================================
 
 // 1. Inisialisasi dan Konfigurasi Dasar TCPDF
 try {
-    $pdf = new TCPDF('L', 'mm', 'A4', true, 'UTF-8', false);
+    $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false); // 'P' untuk Portrait, 'A4'
 } catch (Exception $e) {
     die("Error inisialisasi TCPDF: " . $e->getMessage());
 }
@@ -484,7 +458,7 @@ $pdf->SetTitle('Laporan Pest Control - ' . date('d-m-Y'));
 $pdf->SetSubject('Laporan Pekerjaan Pest Control');
 $pdf->setPrintHeader(false); // Menghilangkan header default
 $pdf->setPrintFooter(false); // Menghilangkan footer default
-$pdf->SetMargins(10, 10, 10); // Margin: kiri, atas, kanan
+$pdf->SetMargins(15, 15, 15); // Margin: kiri, atas, kanan (diperkecil untuk A4)
 $pdf->SetAutoPageBreak(true, 15); // Margin bawah untuk auto page break
 $pdf->AddPage();
 
@@ -493,35 +467,35 @@ $pdf->AddPage();
 $logoPath = '../assets/img/hama.png';
 if (file_exists($logoPath)) {
     try {
-        $pdf->Image($logoPath, 10, 12, 20, 0, 'PNG');
+        $pdf->Image($logoPath, 15, 10, 25, 0, 'PNG');
     } catch (Exception $e) {
         // Logo tidak ditemukan, lanjutkan tanpa logo
     }
 }
 
-$pdf->SetFont('helvetica', 'B', 16);
-$pdf->SetXY(35, 10);
+$pdf->SetFont('helvetica', 'B', 14);
+$pdf->SetXY(45, 10);
 $pdf->Cell(0, 5, 'PT. REXON MITRA PRIMA', 0, 1, 'L');
-$pdf->SetFont('helvetica', 'B', 12);
-$pdf->SetXY(35, 16);
+$pdf->SetFont('helvetica', 'B', 11);
+$pdf->SetXY(45, 16);
 $pdf->Cell(0, 5, 'JASA PEMBASMI HAMA PROFESIONAL', 0, 1, 'L');
-$pdf->SetFont('helvetica', '', 9);
-$pdf->SetXY(35, 22);
+$pdf->SetFont('helvetica', '', 8);
+$pdf->SetXY(45, 21);
 $pdf->Cell(0, 5, 'Komplek Perumahan Salaka Nagara Ruko Nomor 3, Balaraja, Tangerang - Banten 15610', 0, 1, 'L');
-$pdf->SetXY(35, 27);
+$pdf->SetXY(45, 26);
 $pdf->Cell(0, 5, 'Telp: 0812-3456-7890 | Email: info@rexonpestcontrol.com', 0, 1, 'L');
-$pdf->Line(10, 35, 287, 35); // Garis pemisah (landscape mode)
+$pdf->Line(15, 32, 195, 32); // Garis pemisah (A4 width = 210mm, margin 15mm)
 $pdf->Ln(8);
 
 // 3. JUDUL LAPORAN DAN INFORMASI FILTER
 // -----------------------------------------------------------------
-$pdf->SetFont('helvetica', 'BU', 14);
+$pdf->SetFont('helvetica', 'BU', 12);
 if ($show_photos) {
     $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL DENGAN FOTO', 0, 1, 'C');
 } else {
     $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL', 0, 1, 'C');
 }
-$pdf->SetFont('helvetica', '', 10);
+$pdf->SetFont('helvetica', '', 9);
 
 $filterInfo = "Periode: " . ($start_date ? formatTanggalIndonesia($start_date) : 'Awal') . " s/d " . ($end_date ? formatTanggalIndonesia($end_date) : 'Akhir');
 $pdf->Cell(0, 5, $filterInfo, 0, 1, 'C');
@@ -543,7 +517,7 @@ if (!empty($additionalInfo)) {
 $pdf->Ln(5);
 
 // ===================================================================
-// --- BAGIAN LAPORAN DENGAN FOTO ---
+// --- BAGIAN LAPORAN DENGAN FOTO (A4 PORTRAIT) ---
 // ===================================================================
 if (!empty($reportsByService)) {
     $total_pendapatan = 0;
@@ -557,11 +531,11 @@ if (!empty($reportsByService)) {
         $total_pendapatan += $pendapatan_layanan;
         
         // Header Layanan
-        $pdf->SetFont('helvetica', 'B', 12);
+        $pdf->SetFont('helvetica', 'B', 11);
         $pdf->SetFillColor(220, 237, 200); // Hijau muda
         $pdf->Cell(0, 8, 'LAYANAN: ' . $serviceData['service_name'] . ' (' . $serviceData['kode_service'] . ')', 0, 1, 'L', true);
         
-        $pdf->SetFont('helvetica', '', 9);
+        $pdf->SetFont('helvetica', '', 8);
         $pdf->Cell(0, 5, 'Jumlah Pekerjaan: ' . $total_layanan . ' | Harga per Layanan: Rp ' . number_format($serviceData['service_harga'], 0, ',', '.') . ' | Total Pendapatan: Rp ' . number_format($pendapatan_layanan, 0, ',', '.'), 0, 1, 'L');
         $pdf->Ln(3);
         
@@ -569,138 +543,98 @@ if (!empty($reportsByService)) {
             // Mode dengan foto - tampilkan per laporan dengan detail lengkap
             $no = 1;
             foreach ($serviceData['reports'] as $report) {
-                // Cek jika perlu halaman baru
-                if ($pdf->GetY() > ($pdf->getPageHeight() - 150)) {
+                // Cek jika perlu halaman baru (A4 height = 297mm)
+                if ($pdf->GetY() > ($pdf->getPageHeight() - 100)) {
                     $pdf->AddPage();
                 }
                 
                 // Header Laporan
-                $pdf->SetFont('helvetica', 'B', 10);
+                $pdf->SetFont('helvetica', 'B', 9);
                 $pdf->SetFillColor(240, 240, 240);
                 $pdf->Cell(0, 7, 'Laporan #' . $no++ . ' - ' . ($report['kode_laporan'] ?? 'N/A'), 0, 1, 'L', true);
-                $pdf->SetFont('helvetica', '', 9);
+                $pdf->SetFont('helvetica', '', 8);
                 
-                // Informasi Laporan - Kolom kiri
+                // Informasi Laporan - Dua kolom untuk A4
                 $infoY = $pdf->GetY();
-                $pdf->SetXY(15, $infoY);
                 
-                $pdf->MultiCell(80, 5, 
+                // Kolom kiri
+                $pdf->SetXY(20, $infoY);
+                $pdf->MultiCell(80, 4, 
                     "Tanggal Laporan: " . formatTanggalIndonesia($report['tanggal_pelaporan']) . "\n" .
                     "Jam: " . ($report['jam_mulai'] ?? '-') . " - " . ($report['jam_selesai'] ?? '-') . "\n" .
                     "Perusahaan: " . ($report['nama_perusahaan'] ?? 'Tidak ada data') . "\n" .
                     "Customer: " . ($report['nama_customer'] ?? 'Tidak ada data') . "\n" .
                     "Telepon: " . ($report['customer_telepon'] ?? '-') . "\n" .
-                    "Alamat: " . (strlen($report['customer_alamat'] ?? '') > 50 ? substr($report['customer_alamat'], 0, 50) . '...' : ($report['customer_alamat'] ?? '-'))
+                    "Alamat: " . (strlen($report['customer_alamat'] ?? '') > 30 ? substr($report['customer_alamat'], 0, 30) . '...' : ($report['customer_alamat'] ?? '-'))
                 , 0, 'L');
                 
-                // Informasi Laporan - Kolom kanan
-                $pdf->SetXY(105, $infoY);
-                $pdf->MultiCell(80, 5, 
+                // Kolom kanan
+                $pdf->SetXY(110, $infoY);
+                $pdf->MultiCell(80, 4, 
                     "Pekerja: " . ($report['pekerja_nama'] ?? 'N/A') . "\n" .
                     "Jabatan: " . ($report['pekerja_jabatan'] ?? 'N/A') . "\n" .
                     "Jadwal: " . ($report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) : 'N/A') . "\n" .
                     "Jam Jadwal: " . ($report['jadwal_jam'] ?? '-') . "\n" .
                     "Lokasi: " . ($report['jadwal_lokasi'] ?? 'N/A') . "\n" .
-                    "Prioritas: " . ($report['prioritas'] ?? 'N/A') . "\n" .
-                    "Status: " . ($report['jadwal_status'] ?? 'N/A')
-                , 0, 'L');
-                
-                $pdf->SetXY(185, $infoY);
-                $pdf->MultiCell(80, 5, 
-                    "Rating: " . ($report['rating_customer'] ? str_repeat('★', $report['rating_customer']) . ' (' . $report['rating_customer'] . '/5)' : '-') . "\n" .
-                    "Bahan Digunakan: " . ($report['bahan_digunakan'] ?? '-') . "\n" .
-                    "Dibuat: " . date('d/m/Y H:i', strtotime($report['created_at'])) . "\n" .
-                    "Kode Service: " . ($report['kode_service'] ?? '-')
+                    "Prioritas: " . ($report['prioritas'] ?? 'N/A')
                 , 0, 'L');
                 
                 $pdf->Ln(5);
                 
                 // Deskripsi/Keterangan
                 if (!empty($report['keterangan'])) {
-                    $pdf->SetFont('helvetica', 'B', 9);
+                    $pdf->SetFont('helvetica', 'B', 8);
                     $pdf->Cell(0, 5, 'Keterangan Pekerjaan:', 0, 1, 'L');
-                    $pdf->SetFont('helvetica', '', 8);
+                    $pdf->SetFont('helvetica', '', 7);
                     $keterangan = $report['keterangan'];
-                    if (strlen($keterangan) > 500) {
-                        $keterangan = substr($keterangan, 0, 500) . '...';
+                    if (strlen($keterangan) > 300) {
+                        $keterangan = substr($keterangan, 0, 300) . '...';
                     }
                     $pdf->MultiCell(0, 4, $keterangan, 0, 'L');
                     $pdf->Ln(2);
                 }
                 
-                // Hasil Pengamatan
-                if (!empty($report['hasil_pengamatan'])) {
-                    $pdf->SetFont('helvetica', 'B', 9);
-                    $pdf->Cell(0, 5, 'Hasil Pengamatan:', 0, 1, 'L');
-                    $pdf->SetFont('helvetica', '', 8);
-                    $hasil = $report['hasil_pengamatan'];
-                    if (strlen($hasil) > 300) {
-                        $hasil = substr($hasil, 0, 300) . '...';
-                    }
-                    $pdf->MultiCell(0, 4, $hasil, 0, 'L');
-                    $pdf->Ln(2);
-                }
-                
-                // Rekomendasi
-                if (!empty($report['rekomendasi'])) {
-                    $pdf->SetFont('helvetica', 'B', 9);
-                    $pdf->Cell(0, 5, 'Rekomendasi:', 0, 1, 'L');
-                    $pdf->SetFont('helvetica', '', 8);
-                    $rekomendasi = $report['rekomendasi'];
-                    if (strlen($rekomendasi) > 300) {
-                        $rekomendasi = substr($rekomendasi, 0, 300) . '...';
-                    }
-                    $pdf->MultiCell(0, 4, $rekomendasi, 0, 'L');
-                    $pdf->Ln(2);
-                }
-                
                 // ===================================================================
-                // --- BAGIAN FOTO DENGAN VALIDASI FILE ---
+                // --- BAGIAN FOTO DENGAN VALIDASI FILE (A4) ---
                 // ===================================================================
                 $hasPhotos = false;
                 $photoY = $pdf->GetY();
-                $photoX = 15;
+                $photoX = 20;
                 
                 // Foto Sebelum
                 if (!empty($report['foto_sebelum'])) {
                     $hasPhotos = true;
                     $photoPath = '../assets/uploads/' . $report['foto_sebelum'];
-                    
-                    // DEBUG: Log foto yang akan ditambahkan
-                    error_log("Adding photo - Sebelum: " . $photoPath . " | Exists: " . (file_exists($photoPath) ? 'YES' : 'NO'));
-                    
                     addPhotoToPDF($pdf, $photoPath, "Foto Sebelum", $photoX, $photoY);
-                    $photoX += 65; // Geser untuk foto berikutnya
+                    $photoX += 55; // Geser untuk foto berikutnya
                 }
                 
                 // Foto Sesudah
                 if (!empty($report['foto_sesudah'])) {
                     $hasPhotos = true;
                     $photoPath = '../assets/uploads/' . $report['foto_sesudah'];
-                    
-                    // DEBUG: Log foto yang akan ditambahkan
-                    error_log("Adding photo - Sesudah: " . $photoPath . " | Exists: " . (file_exists($photoPath) ? 'YES' : 'NO'));
-                    
                     addPhotoToPDF($pdf, $photoPath, "Foto Sesudah", $photoX, $photoY);
-                    $photoX += 65; // Geser untuk foto berikutnya
+                    $photoX += 55; // Geser untuk foto berikutnya
                 }
                 
                 // Foto Bukti
                 if (!empty($report['foto_bukti'])) {
                     $hasPhotos = true;
                     $photoPath = '../assets/uploads/' . $report['foto_bukti'];
-                    
-                    // DEBUG: Log foto yang akan ditambahkan
-                    error_log("Adding photo - Bukti: " . $photoPath . " | Exists: " . (file_exists($photoPath) ? 'YES' : 'NO'));
-                    
+                    // Cek apakah masih muat di baris yang sama
+                    if ($photoX > 140) { // Jika sudah dekat margin kanan
+                        $pdf->SetY($photoY + 40); // Turun ke baris baru
+                        $photoY = $pdf->GetY();
+                        $photoX = 20;
+                    }
                     addPhotoToPDF($pdf, $photoPath, "Foto Bukti", $photoX, $photoY);
                 }
                 
                 if ($hasPhotos) {
-                    $pdf->SetY($photoY + 45); // Pindah ke bawah setelah foto
+                    $pdf->SetY($photoY + 40); // Pindah ke bawah setelah foto
                 } else {
                     // Jika tidak ada foto, beri keterangan
-                    $pdf->SetFont('helvetica', 'I', 9);
+                    $pdf->SetFont('helvetica', 'I', 8);
                     $pdf->SetTextColor(150, 150, 150);
                     $pdf->Cell(0, 5, '* Tidak ada foto dokumentasi untuk laporan ini', 0, 1, 'C');
                     $pdf->SetTextColor(0, 0, 0);
@@ -708,7 +642,7 @@ if (!empty($reportsByService)) {
                 }
                 
                 // Garis pemisah antar laporan
-                $pdf->Line(10, $pdf->GetY(), 287, $pdf->GetY());
+                $pdf->Line(15, $pdf->GetY(), 195, $pdf->GetY());
                 $pdf->Ln(5);
                 
                 // Jika sudah di akhir halaman, tambah halaman baru
@@ -717,10 +651,10 @@ if (!empty($reportsByService)) {
                 }
             }
         } else {
-            // Mode tanpa foto - tampilkan tabel ringkas
+            // Mode tanpa foto - tampilkan tabel ringkas untuk A4
             // Header Tabel
-            $header = ['No', 'Kode Laporan', 'Tanggal Laporan', 'Perusahaan', 'Customer', 'Pekerja', 'Jadwal', 'Lokasi', 'Prioritas', 'Foto'];
-            $widths = [8, 20, 22, 30, 25, 25, 22, 30, 15, 15];
+            $header = ['No', 'Kode', 'Tanggal', 'Perusahaan', 'Pekerja', 'Lokasi', 'Prioritas'];
+            $widths = [8, 20, 25, 40, 30, 40, 15];
             
             $pdf->SetFillColor(240, 240, 240);
             $pdf->SetTextColor(0);
@@ -764,43 +698,36 @@ if (!empty($reportsByService)) {
                 $pdf->MultiCell($widths[0], $rowHeight, $no++, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Kode Laporan
-                $pdf->MultiCell($widths[1], $rowHeight, $report['kode_laporan'] ?? 'N/A', 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $kode = $report['kode_laporan'] ?? 'N/A';
+                $pdf->MultiCell($widths[1], $rowHeight, $kode, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Tanggal Laporan
-                $tglLaporan = formatTanggalIndonesia($report['tanggal_pelaporan']) . "\n" . ($report['jam_mulai'] ?? '');
+                $tglLaporan = !empty($report['tanggal_pelaporan']) ? date('d/m/Y', strtotime($report['tanggal_pelaporan'])) : '';
+                if (!empty($report['jam_mulai'])) {
+                    $tglLaporan .= "\n" . date('H:i', strtotime($report['jam_mulai']));
+                }
                 $pdf->MultiCell($widths[2], $rowHeight, $tglLaporan, 'LTRB', 'C', true, 0, '', '', true, 0, true, true, $rowHeight, 'M');
                 
                 // Perusahaan
                 $perusahaan = $report['nama_perusahaan'] ?? 'Tidak ada data';
-                if (strlen($perusahaan) > 20) {
-                    $perusahaan = substr($perusahaan, 0, 20) . '...';
+                if (strlen($perusahaan) > 25) {
+                    $perusahaan = substr($perusahaan, 0, 25) . '...';
                 }
                 $pdf->MultiCell($widths[3], $rowHeight, $perusahaan, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
-                
-                // Customer
-                $customer = $report['nama_customer'] ?? 'Tidak ada data';
-                if (strlen($customer) > 15) {
-                    $customer = substr($customer, 0, 15) . '...';
-                }
-                $pdf->MultiCell($widths[4], $rowHeight, $customer, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Pekerja
                 $pekerja = $report['pekerja_nama'] ?? 'N/A';
                 if (strlen($pekerja) > 15) {
                     $pekerja = substr($pekerja, 0, 15) . '...';
                 }
-                $pdf->MultiCell($widths[5], $rowHeight, $pekerja, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
-                
-                // Jadwal
-                $jadwal = $report['jadwal_tanggal'] ? formatTanggalIndonesia($report['jadwal_tanggal']) . "\n" . ($report['jadwal_jam'] ?? '') : 'N/A';
-                $pdf->MultiCell($widths[6], $rowHeight, $jadwal, 'LTRB', 'C', true, 0, '', '', true, 0, true, true, $rowHeight, 'M');
+                $pdf->MultiCell($widths[4], $rowHeight, $pekerja, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Lokasi
                 $lokasi = $report['jadwal_lokasi'] ?? 'N/A';
-                if (strlen($lokasi) > 20) {
-                    $lokasi = substr($lokasi, 0, 20) . '...';
+                if (strlen($lokasi) > 25) {
+                    $lokasi = substr($lokasi, 0, 25) . '...';
                 }
-                $pdf->MultiCell($widths[7], $rowHeight, $lokasi, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $pdf->MultiCell($widths[5], $rowHeight, $lokasi, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Prioritas
                 $prioritas = $report['prioritas'] ?? 'N/A';
@@ -831,17 +758,7 @@ if (!empty($reportsByService)) {
                 
                 $pdf->SetFillColorArray($fillColor);
                 $pdf->SetTextColor($textColor);
-                $pdf->MultiCell($widths[8], $rowHeight, $prioritas, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
-                
-                // Foto (indikator)
-                $pdf->SetFillColor(255);
-                $pdf->SetTextColor(0);
-                $foto_count = 0;
-                if (!empty($report['foto_sebelum'])) $foto_count++;
-                if (!empty($report['foto_sesudah'])) $foto_count++;
-                if (!empty($report['foto_bukti'])) $foto_count++;
-                $foto_text = $foto_count > 0 ? '✓ ' . $foto_count : '-';
-                $pdf->MultiCell($widths[9], $rowHeight, $foto_text, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $pdf->MultiCell($widths[6], $rowHeight, $prioritas, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Reset warna untuk row berikutnya
                 $pdf->SetFillColor(255);
@@ -884,31 +801,31 @@ if (!empty($reportsByService)) {
     $pdf->Cell(0, 20, 'Tidak ada data laporan yang sesuai dengan filter yang dipilih.', 0, 1, 'C');
 }
 
-// 4. BAGIAN TANDA TANGAN
+// 4. BAGIAN TANDA TANGAN (POSISI DI BAWAH)
 // -----------------------------------------------------------------
 if ($pdf->GetY() > ($pdf->getPageHeight() - 50)) {
     $pdf->AddPage();
 }
 
 $pdf->Ln(10);
-$pdf->SetFont('helvetica', '', 11);
-$pdf->SetX(200);
+$pdf->SetFont('helvetica', '', 10);
+$pdf->SetX(120);
 $pdf->Cell(0, 5, 'Tangerang, ' . formatTanggalIndonesia(date('Y-m-d')), 0, 1, 'L');
-$pdf->SetX(200);
+$pdf->SetX(120);
 $pdf->Cell(0, 5, 'Mengetahui,', 0, 1, 'L');
-$pdf->SetX(200);
+$pdf->SetX(120);
 $pdf->Cell(0, 5, 'Manager Operasional', 0, 1, 'L');
 $pdf->Ln(15); 
-$pdf->SetX(200);
-$pdf->SetFont('helvetica', 'BU', 11);
+$pdf->SetX(120);
+$pdf->SetFont('helvetica', 'BU', 10);
 $pdf->Cell(0, 5, 'Saepul', 0, 1, 'L');
-$pdf->SetFont('helvetica', '', 11);
-$pdf->SetX(200);
+$pdf->SetFont('helvetica', '', 9);
+$pdf->SetX(120);
 $pdf->Cell(0, 5, 'NIK: 1234567890', 0, 1, 'L');
 
 // 5. Footer Hak Cipta
 $pdf->SetY(-15);
-$pdf->SetFont('helvetica', 'I', 8);
+$pdf->SetFont('helvetica', 'I', 7);
 $pdf->Cell(0, 10, 'Dokumen ini dihasilkan secara otomatis oleh Sistem Pest Control PT. Rexon Mitra Prima pada ' . date('d/m/Y H:i:s'), 0, 0, 'C');
 
 // 6. Output PDF

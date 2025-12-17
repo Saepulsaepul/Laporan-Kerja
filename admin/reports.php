@@ -72,7 +72,7 @@ try {
               u.username as pekerja_username, 
               u.jabatan as pekerja_jabatan,
               
-              -- PRIORITAS: customer dari jadwal jika customer_id di reports NULL
+              -- Customer data (prioritize from reports.customer_id, fallback to jadwal.customer_id)
               COALESCE(c1.nama_perusahaan, c2.nama_perusahaan) as nama_perusahaan,
               COALESCE(c1.nama_customer, c2.nama_customer) as nama_customer,
               COALESCE(c1.telepon, c2.telepon) as customer_telepon,
@@ -126,8 +126,15 @@ try {
     }
     
     if (!empty($search)) {
-        $query .= " AND (c.nama_perusahaan LIKE ? OR c.nama_customer LIKE ? OR r.keterangan LIKE ? OR s.nama_service LIKE ?)";
+        $query .= " AND (
+            COALESCE(c1.nama_perusahaan, c2.nama_perusahaan) LIKE ? OR 
+            COALESCE(c1.nama_customer, c2.nama_customer) LIKE ? OR 
+            r.keterangan LIKE ? OR 
+            s.nama_service LIKE ? OR
+            r.kode_laporan LIKE ?
+        )";
         $searchTerm = "%$search%";
+        $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
         $params[] = $searchTerm;
@@ -142,9 +149,12 @@ try {
     
     // Hitung statistik
     $total_reports = count($reports);
-    $total_with_photos = count(array_filter($reports, function($report) {
-        return !empty($report['foto_bukti']) || !empty($report['foto_sebelum']) || !empty($report['foto_sesudah']);
-    }));
+    $total_with_photos = 0;
+    foreach ($reports as $report) {
+        if (!empty($report['foto_bukti']) || !empty($report['foto_sebelum']) || !empty($report['foto_sesudah'])) {
+            $total_with_photos++;
+        }
+    }
     
 } catch (PDOException $e) {
     $error = "Gagal mengambil data laporan: " . $e->getMessage();
@@ -187,10 +197,9 @@ function format_date_safe($date) {
         return '-';
     }
     try {
-        require_once '../includes/functions.php';
-        return formatTanggalIndonesia($date);
-    } catch (Exception $e) {
         return date('d/m/Y', strtotime($date));
+    } catch (Exception $e) {
+        return $date;
     }
 }
 
@@ -213,6 +222,19 @@ function get_service_badge($service_name, $service_code) {
     }
     $badge .= '</span>';
     return $badge;
+}
+
+// Tambahkan fungsi untuk memeriksa apakah file gambar valid
+function is_valid_image($path) {
+    if (!file_exists($path) || !is_readable($path)) {
+        return false;
+    }
+    
+    // Periksa tipe MIME
+    $mime_type = mime_content_type($path);
+    $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    
+    return in_array($mime_type, $allowed_types);
 }
 // ======================================
 
@@ -303,6 +325,7 @@ require_once 'includes/header.php';
         cursor: pointer;
         transition: transform 0.2s ease;
         margin: 5px;
+        object-fit: cover;
     }
     .photo-preview:hover {
         transform: scale(1.05);
@@ -371,6 +394,16 @@ require_once 'includes/header.php';
         -webkit-line-clamp: 2;
         -webkit-box-orient: vertical;
         overflow: hidden;
+        word-break: break-word;
+    }
+    .btn-delete-report {
+        position: relative;
+        overflow: hidden;
+    }
+    .btn-delete-report:hover {
+        background-color: #dc3545 !important;
+        border-color: #dc3545 !important;
+        color: white !important;
     }
 </style>
 
@@ -514,9 +547,10 @@ require_once 'includes/navbar.php';
                         $foto_sebelum_path = get_photo_path($report['foto_sebelum'] ?? '', $upload_dir);
                         $foto_sesudah_path = get_photo_path($report['foto_sesudah'] ?? '', $upload_dir);
                         
-                        $has_foto_bukti = !empty($foto_bukti_path);
-                        $has_foto_sebelum = !empty($foto_sebelum_path);
-                        $has_foto_sesudah = !empty($foto_sesudah_path);
+                        // Cek validitas gambar
+                        $has_foto_bukti = !empty($foto_bukti_path) && is_valid_image($foto_bukti_path);
+                        $has_foto_sebelum = !empty($foto_sebelum_path) && is_valid_image($foto_sebelum_path);
+                        $has_foto_sesudah = !empty($foto_sesudah_path) && is_valid_image($foto_sesudah_path);
                         $has_any_photo = $has_foto_bukti || $has_foto_sebelum || $has_foto_sesudah;
                         
                         // Rating stars
@@ -532,8 +566,10 @@ require_once 'includes/navbar.php';
                             <div class="report-card">
                                 <div class="report-header">
                                     <div>
-                                        <h5 class="mb-1 text-truncate"><?php echo safe_html($report['nama_perusahaan'] ?? 'N/A'); ?></h5>
-                                        <span class="company-badge">
+                                        <h5 class="mb-1 text-truncate" title="<?php echo safe_html($report['nama_perusahaan'] ?? 'N/A'); ?>">
+                                            <?php echo safe_html($report['nama_perusahaan'] ?? 'N/A'); ?>
+                                        </h5>
+                                        <span class="company-badge" title="<?php echo safe_html($report['nama_customer'] ?? 'N/A'); ?>">
                                             <?php echo safe_html($report['nama_customer'] ?? 'N/A'); ?>
                                         </span>
                                         <div class="mt-1">
@@ -551,7 +587,9 @@ require_once 'includes/navbar.php';
                                         <i class="fas fa-user-tie"></i>
                                         <div>
                                             <strong>Pekerja:</strong> 
-                                            <?php echo safe_html($report['pekerja_nama'] ?? 'N/A'); ?>
+                                            <span title="<?php echo safe_html($report['pekerja_nama'] ?? 'N/A'); ?>">
+                                                <?php echo safe_html($report['pekerja_nama'] ?? 'N/A'); ?>
+                                            </span>
                                             <?php if (!empty($report['pekerja_jabatan'])): ?>
                                                 <small class="text-muted">(<?php echo safe_html($report['pekerja_jabatan']); ?>)</small>
                                             <?php endif; ?>
@@ -566,18 +604,22 @@ require_once 'includes/navbar.php';
                                             <strong>Jadwal:</strong> 
                                             <?php echo $jadwal_date . ' • ' . $jadwal_time; ?>
                                             <?php if (!empty($report['jadwal_lokasi'])): ?>
-                                                <br><small class="text-muted"><?php echo safe_html($report['jadwal_lokasi']); ?></small>
+                                                <br><small class="text-muted" title="<?php echo safe_html($report['jadwal_lokasi']); ?>">
+                                                    <?php echo mb_strlen($report['jadwal_lokasi']) > 50 ? mb_substr($report['jadwal_lokasi'], 0, 50) . '...' : safe_html($report['jadwal_lokasi']); ?>
+                                                </small>
                                             <?php endif; ?>
                                         </div>
                                     </div>
                                     
+                                    <?php if (!empty($report['customer_telepon'])): ?>
                                     <div class="info-item">
                                         <i class="fas fa-phone"></i>
                                         <div>
                                             <strong>Kontak Customer:</strong> 
-                                            <?php echo safe_html($report['customer_telepon'] ?? 'N/A'); ?>
+                                            <?php echo safe_html($report['customer_telepon']); ?>
                                         </div>
                                     </div>
+                                    <?php endif; ?>
                                     
                                     <?php if ($jam_mulai !== '-' || $jam_selesai !== '-'): ?>
                                     <div class="timeline-info">
@@ -592,7 +634,9 @@ require_once 'includes/navbar.php';
                                         <?php if (!empty($report['bahan_digunakan'])): ?>
                                         <div class="timeline-item">
                                             <span>Bahan Digunakan:</span>
-                                            <strong><?php echo safe_html($report['bahan_digunakan']); ?></strong>
+                                            <strong title="<?php echo safe_html($report['bahan_digunakan']); ?>">
+                                                <?php echo mb_strlen($report['bahan_digunakan']) > 30 ? mb_substr($report['bahan_digunakan'], 0, 30) . '...' : safe_html($report['bahan_digunakan']); ?>
+                                            </strong>
                                         </div>
                                         <?php endif; ?>
                                     </div>
@@ -601,7 +645,7 @@ require_once 'includes/navbar.php';
                                     <?php if (!empty($report['keterangan'])): ?>
                                     <div class="report-keterangan mt-3">
                                         <h6 class="mb-2"><i class="fas fa-clipboard-check me-2"></i>Keterangan Pekerjaan:</h6>
-                                        <div class="text-truncate-2">
+                                        <div class="text-truncate-2" title="<?php echo safe_html($report['keterangan']); ?>">
                                             <?php echo safe_nl2br($report['keterangan']); ?>
                                         </div>
                                     </div>
@@ -610,7 +654,7 @@ require_once 'includes/navbar.php';
                                     <?php if (!empty($report['hasil_pengamatan'])): ?>
                                     <div class="alert alert-warning mt-3">
                                         <h6 class="mb-2"><i class="fas fa-binoculars me-2"></i>Hasil Pengamatan:</h6>
-                                        <div class="text-truncate-2">
+                                        <div class="text-truncate-2" title="<?php echo safe_html($report['hasil_pengamatan']); ?>">
                                             <?php echo safe_nl2br($report['hasil_pengamatan']); ?>
                                         </div>
                                     </div>
@@ -619,7 +663,7 @@ require_once 'includes/navbar.php';
                                     <?php if (!empty($report['rekomendasi'])): ?>
                                     <div class="alert alert-info mt-3">
                                         <h6 class="mb-2"><i class="fas fa-lightbulb me-2"></i>Rekomendasi:</h6>
-                                        <div class="text-truncate-2">
+                                        <div class="text-truncate-2" title="<?php echo safe_html($report['rekomendasi']); ?>">
                                             <?php echo safe_nl2br($report['rekomendasi']); ?>
                                         </div>
                                     </div>
@@ -686,11 +730,12 @@ require_once 'includes/navbar.php';
                                                     data-bs-toggle="modal" 
                                                     data-bs-target="#photoGalleryModal"
                                                     data-photos='<?php 
-                                                        echo htmlspecialchars(json_encode([
+                                                        $photos_data = [
                                                             'sebelum' => $has_foto_sebelum ? $foto_sebelum_path : null,
                                                             'sesudah' => $has_foto_sesudah ? $foto_sesudah_path : null,
                                                             'bukti' => $has_foto_bukti ? $foto_bukti_path : null
-                                                        ]), ENT_QUOTES, 'UTF-8'); 
+                                                        ];
+                                                        echo htmlspecialchars(json_encode($photos_data), ENT_QUOTES, 'UTF-8'); 
                                                     ?>'>
                                                 <i class="fas fa-images me-1"></i>Semua Foto
                                             </button>
@@ -700,8 +745,9 @@ require_once 'includes/navbar.php';
                                                     data-bs-target="#detailModal<?php echo $index; ?>">
                                                 <i class="fas fa-info-circle me-1"></i>Detail
                                             </button>
-                                            <a href="?delete=<?php echo $report['id']; ?>" class="btn btn-sm btn-outline-danger ms-1" 
-                                               onclick="return confirm('Hapus laporan ini? Semua foto terkait juga akan dihapus. Tindakan ini tidak dapat dibatalkan.')">
+                                            <a href="?delete=<?php echo $report['id']; ?>" 
+                                               class="btn btn-sm btn-outline-danger ms-1 btn-delete-report" 
+                                               onclick="return confirmDeleteReport()">
                                                 <i class="fas fa-trash"></i>
                                             </a>
                                         </div>
@@ -785,9 +831,9 @@ require_once 'includes/navbar.php';
                                                             <tr><td><strong>Jam Mulai</strong></td><td><?php echo $jam_mulai; ?></td></tr>
                                                             <tr><td><strong>Jam Selesai</strong></td><td><?php echo $jam_selesai; ?></td></tr>
                                                             <?php if ($rating > 0): ?>
-                                                            <!-- <tr><td><strong>Rating Customer</strong></td><td>
+                                                            <tr><td><strong>Rating Customer</strong></td><td>
                                                                 <div class="rating-stars"><?php echo $stars; ?></div>
-                                                            </td></tr> -->
+                                                            </td></tr>
                                                             <?php endif; ?>
                                                         </table>
                                                     </div>
@@ -883,7 +929,7 @@ require_once 'includes/navbar.php';
                                     </div>
                                     <div class="modal-footer">
                                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
-                                        <button type="button" class="btn btn-primary" onclick="window.print()">
+                                        <button type="button" class="btn btn-primary" onclick="printModalContent(<?php echo $index; ?>)">
                                             <i class="fas fa-print me-2"></i>Print
                                         </button>
                                     </div>
@@ -893,6 +939,21 @@ require_once 'includes/navbar.php';
                     <?php endforeach; ?>
                 <?php endif; ?>
             </div>
+            
+            <!-- Pagination atau info jumlah data -->
+            <?php if ($total_reports > 0): ?>
+            <div class="row mt-4">
+                <div class="col">
+                    <div class="alert alert-info mb-0">
+                        <i class="fas fa-info-circle me-2"></i>
+                        Menampilkan <?php echo $total_reports; ?> laporan 
+                        <?php if (!empty($filter_date_from) || !empty($filter_date_to) || !empty($filter_pekerja_id) || !empty($search)): ?>
+                        berdasarkan filter yang dipilih
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
         </main>
     </div>
 </div>
@@ -906,7 +967,7 @@ require_once 'includes/navbar.php';
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body text-center">
-                <img id="modalPhoto" src="" alt="Foto" class="img-fluid rounded modal-photo">
+                <img id="modalPhoto" src="" alt="Foto" class="img-fluid rounded modal-photo" style="max-width: 100%;">
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
@@ -941,6 +1002,74 @@ require_once 'includes/navbar.php';
 <?php require_once 'includes/footer.php'; ?>
 
 <script>
+function confirmDeleteReport() {
+    return confirm('Hapus laporan ini? Semua foto terkait juga akan dihapus.\n\nTindakan ini tidak dapat dibatalkan.\n\nLanjutkan?');
+}
+
+function printModalContent(index) {
+    // Store original body content and classes
+    const originalContent = document.body.innerHTML;
+    const originalClasses = document.body.className;
+    
+    // Get modal content
+    const modalElement = document.getElementById('detailModal' + index);
+    if (!modalElement) return;
+    
+    const modalContent = modalElement.querySelector('.modal-content').innerHTML;
+    
+    // Create printable content
+    const printContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Laporan Pest Control</title>
+            <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; }
+                .print-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+                .print-header h1 { margin: 0; color: #333; }
+                .print-header .subtitle { color: #666; font-size: 14px; }
+                .section { margin-bottom: 20px; page-break-inside: avoid; }
+                .section-title { background: #f5f5f5; padding: 8px; border-left: 4px solid #007bff; margin-bottom: 10px; }
+                .table-responsive { overflow-x: auto; }
+                table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+                th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                th { background-color: #f2f2f2; }
+                .photos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; }
+                .photo-item { text-align: center; }
+                .photo-item img { max-width: 100%; height: auto; }
+                @media print {
+                    .no-print { display: none; }
+                    .page-break { page-break-before: always; }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="print-header">
+                <h1>LAPORAN PEKERJAAN PEST CONTROL</h1>
+                <div class="subtitle">Dicetak pada: ${new Date().toLocaleDateString('id-ID')} ${new Date().toLocaleTimeString('id-ID')}</div>
+            </div>
+            
+            ${modalContent.replace(/<button[^>]*>.*?<\/button>/g, '')}
+        </body>
+        </html>
+    `;
+    
+    // Open print window
+    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+    
+    // Wait for images to load before printing
+    printWindow.onload = function() {
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.onafterprint = function() {
+                printWindow.close();
+            };
+        }, 500);
+    };
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     // Modal Foto Single
     const photoModal = document.getElementById('photoModal');
@@ -954,6 +1083,7 @@ document.addEventListener("DOMContentLoaded", function() {
             const downloadLink = document.getElementById('downloadPhoto');
             
             modalPhoto.src = photoSrc;
+            modalPhoto.alt = photoTitle;
             modalTitle.textContent = photoTitle;
             downloadLink.href = photoSrc;
             downloadLink.download = photoTitle.toLowerCase().replace(/ /g, '_') + '.jpg';
@@ -1027,6 +1157,12 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         });
     }
+    
+    // Add tooltips
+    const tooltipTriggerList = [].slice.call(document.querySelectorAll('[title]'));
+    tooltipTriggerList.map(function(tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
 });
 
 // Function to view single photo from gallery
@@ -1037,6 +1173,7 @@ function viewSinglePhoto(src, title) {
     const downloadLink = document.getElementById('downloadPhoto');
     
     modalPhoto.src = src;
+    modalPhoto.alt = title;
     modalTitle.textContent = title;
     downloadLink.href = src;
     downloadLink.download = title.toLowerCase().replace(/ /g, '_') + '.jpg';
@@ -1044,6 +1181,3 @@ function viewSinglePhoto(src, title) {
     modal.show();
 }
 </script>
-
-</body>
-</html>
