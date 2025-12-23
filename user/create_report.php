@@ -18,35 +18,56 @@ $error = '';
 $success = '';
 $jadwal_data = [];
 $customer_data = [];
+$services_data = [];
 
-// Ambil data jadwal yang belum dilaporkan - SESUAIKAN DENGAN STRUKTUR DATABASE
+// Ambil data jadwal yang belum selesai atau perlu kunjungan berikutnya
 try {
+    // Ambil jadwal yang assign ke pekerja ini dengan status Menunggu atau Berjalan
     $stmt = $pdo->prepare("
         SELECT 
             j.*,
+            j.id as jadwal_id,
             c.nama_customer,
             c.nama_perusahaan,
-            c.telepon,
+            c.telepon as customer_telepon,
             c.alamat,
             s.nama_service,
+            s.kode_service,
             s.harga,
-            s.deskripsi as deskripsi_service
+            s.deskripsi as deskripsi_service,
+            -- Hitung jumlah laporan yang sudah dibuat untuk jadwal ini
+            (SELECT COUNT(*) FROM reports r WHERE r.jadwal_id = j.id) as total_laporan_dibuat,
+            -- Ambil nomor kunjungan terakhir yang sudah dilaporkan
+            (SELECT COALESCE(MAX(r.nomor_kunjungan), 0) FROM reports r WHERE r.jadwal_id = j.id) as last_reported_kunjungan
         FROM jadwal j
         LEFT JOIN customers c ON j.customer_id = c.id
         LEFT JOIN services s ON j.service_id = s.id
         WHERE j.pekerja_id = ? 
         AND j.status IN ('Berjalan', 'Menunggu')
         AND j.tanggal <= CURDATE()
-        AND j.id NOT IN (SELECT jadwal_id FROM reports WHERE jadwal_id IS NOT NULL AND user_id = ?)
-        ORDER BY j.tanggal DESC, j.jam DESC
+        AND (
+            -- Untuk jadwal sekali: belum ada laporan sama sekali
+            (j.jenis_periode = 'Sekali' AND NOT EXISTS (
+                SELECT 1 FROM reports r WHERE r.jadwal_id = j.id
+            ))
+            OR
+            -- Untuk jadwal berulang: kunjungan_berjalan < jumlah_kunjungan
+            (j.jenis_periode != 'Sekali' AND j.kunjungan_berjalan < j.jumlah_kunjungan)
+        )
+        ORDER BY j.prioritas DESC, j.tanggal ASC, j.jam ASC
     ");
-    $stmt->execute([$user_id, $user_id]);
+    $stmt->execute([$user_id]);
     $jadwal_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Ambil semua customer untuk opsi manual - SESUAIKAN DENGAN STRUKTUR
-    $stmt = $pdo->prepare("SELECT id, nama_customer, nama_perusahaan, telepon, alamat FROM customers ORDER BY nama_customer");
+    // Ambil semua customer untuk opsi manual
+    $stmt = $pdo->prepare("SELECT id, nama_customer, nama_perusahaan, telepon, alamat FROM customers WHERE status = 'Aktif' ORDER BY nama_customer");
     $stmt->execute();
     $customer_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Ambil semua services untuk opsi manual
+    $stmt = $pdo->prepare("SELECT id, kode_service, nama_service, harga FROM services WHERE status = 'Aktif' ORDER BY nama_service");
+    $stmt->execute();
+    $services_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 } catch (PDOException $e) {
     $error = "Gagal mengambil data: " . $e->getMessage();
@@ -55,11 +76,11 @@ try {
 
 // Fungsi helper untuk format tanggal
 
-
 // Proses form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $customer_id = $_POST['customer_id'] ?? '';
     $jadwal_id = $_POST['jadwal_id'] ?? '';
+    $service_id = $_POST['service_id'] ?? '';
     $keterangan = trim($_POST['keterangan'] ?? '');
     $bahan_digunakan = trim($_POST['bahan_digunakan'] ?? '');
     $hasil_pengamatan = trim($_POST['hasil_pengamatan'] ?? '');
@@ -78,6 +99,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $error = "Jam selesai harus setelah jam mulai!";
     } else {
         try {
+            $pdo->beginTransaction();
+            
+            // Jika memilih jadwal, ambil data terkait
+            $nomor_kunjungan = 1;
+            $selected_jadwal = null;
+            
+            if (!empty($jadwal_id)) {
+                $stmt = $pdo->prepare("
+                    SELECT j.*, jd.nomor_kunjungan as next_kunjungan
+                    FROM jadwal j
+                    LEFT JOIN (
+                        SELECT jadwal_id, MAX(nomor_kunjungan) as nomor_kunjungan 
+                        FROM reports 
+                        WHERE jadwal_id = ?
+                    ) jd ON j.id = jd.jadwal_id
+                    WHERE j.id = ?
+                ");
+                $stmt->execute([$jadwal_id, $jadwal_id]);
+                $selected_jadwal = $stmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($selected_jadwal) {
+                    $customer_id = $selected_jadwal['customer_id'];
+                    $service_id = $selected_jadwal['service_id'];
+                    $nomor_kunjungan = ($selected_jadwal['next_kunjungan'] ?? 0) + 1;
+                }
+            }
+            
             // Handle upload foto - bukti
             $foto_bukti = null;
             $foto_sebelum = null;
@@ -143,14 +191,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Generate kode laporan otomatis
                 $kode_laporan = generateKodeLaporan($pdo);
                 
-                // Insert report sesuai dengan struktur database
+                // Insert report sesuai dengan struktur database yang baru
                 $stmt = $pdo->prepare("
                     INSERT INTO reports 
-                    (kode_laporan, user_id, jadwal_id, customer_id, keterangan, 
-                     bahan_digunakan, hasil_pengamatan, rekomendasi, 
+                    (kode_laporan, user_id, jadwal_id, customer_id, service_id, nomor_kunjungan,
+                     keterangan, bahan_digunakan, hasil_pengamatan, rekomendasi, 
                      foto_bukti, foto_sebelum, foto_sesudah,
                      tanggal_pelaporan, jam_mulai, jam_selesai, rating_customer)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
                 $stmt->execute([
@@ -158,6 +206,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $user_id,
                     !empty($jadwal_id) ? $jadwal_id : null,
                     !empty($customer_id) ? $customer_id : null,
+                    !empty($service_id) ? $service_id : null,
+                    $nomor_kunjungan,
                     $keterangan,
                     $bahan_digunakan,
                     $hasil_pengamatan,
@@ -174,21 +224,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $report_id = $pdo->lastInsertId();
                 
                 // Update status jadwal jika berdasarkan jadwal
-                if (!empty($jadwal_id)) {
-                    $stmt = $pdo->prepare("UPDATE jadwal SET status = 'Selesai' WHERE id = ?");
-                    $stmt->execute([$jadwal_id]);
+                if (!empty($jadwal_id) && $selected_jadwal) {
+                    // Cek apakah ini kunjungan terakhir untuk jadwal berulang
+                    if ($selected_jadwal['jenis_periode'] == 'Sekali' || 
+                        $nomor_kunjungan >= $selected_jadwal['jumlah_kunjungan']) {
+                        $stmt = $pdo->prepare("UPDATE jadwal SET status = 'Selesai' WHERE id = ?");
+                        $stmt->execute([$jadwal_id]);
+                    } else {
+                        // Update kunjungan berjalan untuk jadwal berulang
+                        $stmt = $pdo->prepare("UPDATE jadwal SET kunjungan_berjalan = ? WHERE id = ?");
+                        $stmt->execute([$nomor_kunjungan, $jadwal_id]);
+                    }
                 }
                 
-                $success = "Laporan berhasil disimpan! Kode: " . $kode_laporan;
+                $pdo->commit();
+                
+                $success = "Laporan berhasil disimpan! Kode: " . $kode_laporan . 
+                          " (Kunjungan ke-" . $nomor_kunjungan . ")";
                 
                 // Reset form jika sukses
                 $_POST = array();
                 
                 // Redirect setelah 3 detik
                 header("refresh:3;url=my_reports.php");
+                
             }
             
         } catch (PDOException $e) {
+            $pdo->rollBack();
+            $error = "Gagal menyimpan laporan: " . $e->getMessage();
+            error_log("Error save report: " . $e->getMessage());
+        } catch (Exception $e) {
+            $pdo->rollBack();
             $error = "Gagal menyimpan laporan: " . $e->getMessage();
             error_log("Error save report: " . $e->getMessage());
         }
@@ -307,6 +374,48 @@ function generateKodeLaporan($pdo) {
             background: linear-gradient(to bottom, var(--primary-color), var(--secondary-color));
         }
         
+        /* Jadwal Indicator */
+        .jadwal-indicator {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .indicator-sekali { background: #6f42c1; color: white; }
+        .indicator-harian { background: #fd7e14; color: white; }
+        .indicator-mingguan { background: #20c997; color: white; }
+        .indicator-bulanan { background: #0d6efd; color: white; }
+        .indicator-tahunan { background: #dc3545; color: white; }
+        
+        .priority-indicator {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-right: 8px;
+        }
+        
+        .priority-rendah { background: #6c757d; color: white; }
+        .priority-sedang { background: #ffc107; color: #000; }
+        .priority-tinggi { background: #fd7e14; color: white; }
+        .priority-darurat { background: #dc3545; color: white; }
+        
+        /* Progress Bar */
+        .visit-progress {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        
+        .progress-text {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        
         /* Form Container */
         .form-container {
             background: white;
@@ -402,20 +511,6 @@ function generateKodeLaporan($pdo) {
             cursor: pointer;
         }
         
-        /* Preview Image */
-        .image-preview {
-            margin-top: 15px;
-            text-align: center;
-        }
-        
-        .image-preview img {
-            max-width: 100%;
-            max-height: 150px;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-            margin-bottom: 10px;
-        }
-        
         /* Jadwal Cards */
         .jadwal-card {
             background: #f8f9fa;
@@ -449,37 +544,6 @@ function generateKodeLaporan($pdo) {
         
         .jadwal-detail {
             font-size: 0.9rem;
-            color: #6c757d;
-        }
-        
-        /* Rating Stars */
-        .rating-stars {
-            font-size: 1.5rem;
-            color: #ffc107;
-            cursor: pointer;
-        }
-        
-        .rating-stars i {
-            margin-right: 5px;
-        }
-        
-        .rating-stars .far {
-            color: #e4e5e9;
-        }
-        
-        /* Time Inputs */
-        .time-inputs {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-        
-        .time-inputs .form-control {
-            flex: 1;
-        }
-        
-        .time-separator {
-            font-weight: bold;
             color: #6c757d;
         }
         
@@ -528,18 +592,6 @@ function generateKodeLaporan($pdo) {
             color: white;
             padding: 20px 0;
             margin-top: 50px;
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .time-inputs {
-                flex-direction: column;
-                gap: 10px;
-            }
-            
-            .time-separator {
-                display: none;
-            }
         }
     </style>
 </head>
@@ -650,15 +702,31 @@ function generateKodeLaporan($pdo) {
                         <?php else: ?>
                             <label class="form-label mb-3">Pilih Jadwal yang Dilaporkan:</label>
                             <?php foreach ($jadwal_data as $jadwal): 
-                                $customer_name = !empty($jadwal['nama_customer']) ? $jadwal['nama_customer'] : $jadwal['nama_perusahaan'];
+                                $customer_name = !empty($jadwal['nama_perusahaan']) ? $jadwal['nama_perusahaan'] : $jadwal['nama_customer'];
+                                $next_kunjungan = ($jadwal['last_reported_kunjungan'] ?? 0) + 1;
+                                
+                                // Tentukan badge warna berdasarkan jenis periode
+                                $period_class = 'indicator-' . strtolower($jadwal['jenis_periode']);
+                                $priority_class = 'priority-' . strtolower($jadwal['prioritas']);
                             ?>
                                 <label class="jadwal-card">
-                                    <input type="radio" name="jadwal_id" value="<?php echo $jadwal['id']; ?>" 
+                                    <input type="radio" name="jadwal_id" value="<?php echo $jadwal['jadwal_id']; ?>" 
                                            class="jadwal-radio" required>
                                     <div class="jadwal-info">
-                                        <h6><?php echo htmlspecialchars($customer_name); ?></h6>
+                                        <div class="d-flex justify-content-between align-items-start">
+                                            <h6 class="mb-1"><?php echo htmlspecialchars($customer_name); ?></h6>
+                                            <div>
+                                                <span class="<?php echo $priority_class; ?> priority-indicator">
+                                                    <?php echo $jadwal['prioritas']; ?>
+                                                </span>
+                                                <span class="<?php echo $period_class; ?> jadwal-indicator">
+                                                    <?php echo $jadwal['jenis_periode']; ?>
+                                                </span>
+                                            </div>
+                                        </div>
+                                        
                                         <div class="jadwal-detail">
-                                            <span class="badge bg-primary"><?php echo htmlspecialchars($jadwal['nama_service']); ?></span>
+                                            <span class="badge bg-primary"><?php echo htmlspecialchars($jadwal['nama_service']); ?> (<?php echo $jadwal['kode_service']; ?>)</span>
                                             <span class="mx-2">•</span>
                                             <i class="far fa-calendar me-1"></i>
                                             <?php echo formatTanggalIndonesia($jadwal['tanggal']); ?>
@@ -666,19 +734,35 @@ function generateKodeLaporan($pdo) {
                                             <i class="far fa-clock me-1"></i>
                                             <?php echo date('H:i', strtotime($jadwal['jam'])); ?>
                                         </div>
+                                        
                                         <div class="jadwal-detail mt-1">
                                             <small>
                                                 <i class="fas fa-map-marker-alt me-1"></i>
                                                 <?php echo htmlspecialchars($jadwal['alamat'] ?? 'Tidak ada alamat'); ?>
                                             </small>
                                         </div>
-                                        <?php if ($jadwal['deskripsi_service']): ?>
-                                        <div class="jadwal-detail mt-1">
-                                            <small>
-                                                <i class="fas fa-info-circle me-1"></i>
-                                                <?php echo htmlspecialchars(substr($jadwal['deskripsi_service'], 0, 100)); ?>...
-                                            </small>
-                                        </div>
+                                        
+                                        <?php if ($jadwal['jenis_periode'] != 'Sekali'): ?>
+                                            <div class="visit-progress">
+                                                <span class="progress-text">
+                                                    Kunjungan ke-<?php echo $next_kunjungan; ?> dari <?php echo $jadwal['jumlah_kunjungan']; ?>
+                                                </span>
+                                                <?php if ($jadwal['total_laporan_dibuat'] > 0): ?>
+                                                    <span class="ms-2">
+                                                        <i class="fas fa-check-circle text-success me-1"></i>
+                                                        <?php echo $jadwal['total_laporan_dibuat']; ?> laporan sudah dibuat
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endif; ?>
+                                        
+                                        <?php if ($jadwal['catatan_admin']): ?>
+                                            <div class="jadwal-detail mt-2 p-2 bg-light rounded">
+                                                <small>
+                                                    <i class="fas fa-sticky-note me-1 text-warning"></i>
+                                                    <strong>Catatan Admin:</strong> <?php echo htmlspecialchars($jadwal['catatan_admin']); ?>
+                                                </small>
+                                            </div>
                                         <?php endif; ?>
                                     </div>
                                 </label>
@@ -689,7 +773,7 @@ function generateKodeLaporan($pdo) {
                     <!-- Manual Input -->
                     <div id="manual-section" style="display: none;">
                         <div class="row">
-                            <div class="col-md-12 mb-3">
+                            <div class="col-md-6 mb-3">
                                 <label class="form-label">Pilih Customer</label>
                                 <select name="customer_id" class="form-select" id="customer_select">
                                     <option value="">-- Pilih Customer --</option>
@@ -700,6 +784,17 @@ function generateKodeLaporan($pdo) {
                                     ?>
                                         <option value="<?php echo $customer['id']; ?>">
                                             <?php echo htmlspecialchars($customer_display); ?> 
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Pilih Layanan</label>
+                                <select name="service_id" class="form-select" id="service_select">
+                                    <option value="">-- Pilih Layanan --</option>
+                                    <?php foreach ($services_data as $service): ?>
+                                        <option value="<?php echo $service['id']; ?>">
+                                            <?php echo htmlspecialchars($service['nama_service']); ?> (<?php echo $service['kode_service']; ?>)
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
@@ -722,10 +817,10 @@ function generateKodeLaporan($pdo) {
                         </div>
                         <div class="col-md-6 mb-3">
                             <label class="form-label">Waktu Pekerjaan <span class="text-danger">*</span></label>
-                            <div class="time-inputs">
+                            <div class="d-flex align-items-center gap-2">
                                 <input type="time" name="jam_mulai" class="form-control" 
                                        value="<?php echo $_POST['jam_mulai'] ?? date('H:i'); ?>" required>
-                                <span class="time-separator">-</span>
+                                <span class="fw-bold">s/d</span>
                                 <input type="time" name="jam_selesai" class="form-control" 
                                        value="<?php echo $_POST['jam_selesai'] ?? date('H:i', strtotime('+1 hour')); ?>" required>
                             </div>
@@ -764,12 +859,15 @@ function generateKodeLaporan($pdo) {
                     
                     <!-- <div class="mb-3">
                         <label class="form-label">Rating Customer (1-5)</label>
-                        <div class="rating-stars" id="ratingStars">
-                            <?php for ($i = 1; $i <= 5; $i++): ?>
-                                <i class="fas fa-star" data-value="<?php echo $i; ?>"></i>
-                            <?php endfor; ?>
+                        <div class="d-flex align-items-center">
+                            <div class="rating-stars">
+                                <?php for ($i = 1; $i <= 5; $i++): ?>
+                                    <i class="fas fa-star star-rating" data-value="<?php echo $i; ?>"></i>
+                                <?php endfor; ?>
+                            </div>
+                            <span class="ms-3 fw-bold text-primary" id="rating-text">5</span>
                         </div>
-                        <input type="hidden" name="rating_customer" id="ratingInput" value="<?php echo $_POST['rating_customer'] ?? 5; ?>">
+                        <input type="hidden" name="rating_customer" id="ratingInput" value="5">
                         <small class="text-muted">Klik bintang untuk memberikan rating (opsional)</small>
                     </div> -->
                 </div>
@@ -786,8 +884,8 @@ function generateKodeLaporan($pdo) {
                                 <i class="fas fa-camera"></i>
                                 <h6 class="mb-2">Foto Bukti</h6>
                                 <p class="text-muted small">Foto bukti pekerjaan</p>
-                                <input type="file" name="foto_bukti" accept="image/*">
-                                <div class="image-preview" id="previewBukti"></div>
+                                <input type="file" name="foto_bukti" accept="image/*" id="fotoBukti">
+                                <div class="image-preview mt-2" id="previewBukti"></div>
                             </div>
                         </div>
                         
@@ -796,8 +894,8 @@ function generateKodeLaporan($pdo) {
                                 <i class="fas fa-image"></i>
                                 <h6 class="mb-2">Foto Sebelum</h6>
                                 <p class="text-muted small">Foto kondisi sebelum (opsional)</p>
-                                <input type="file" name="foto_sebelum" accept="image/*">
-                                <div class="image-preview" id="previewSebelum"></div>
+                                <input type="file" name="foto_sebelum" accept="image/*" id="fotoSebelum">
+                                <div class="image-preview mt-2" id="previewSebelum"></div>
                             </div>
                         </div>
                         
@@ -806,8 +904,8 @@ function generateKodeLaporan($pdo) {
                                 <i class="fas fa-images"></i>
                                 <h6 class="mb-2">Foto Sesudah</h6>
                                 <p class="text-muted small">Foto kondisi sesudah (opsional)</p>
-                                <input type="file" name="foto_sesudah" accept="image/*">
-                                <div class="image-preview" id="previewSesudah"></div>
+                                <input type="file" name="foto_sesudah" accept="image/*" id="fotoSesudah">
+                                <div class="image-preview mt-2" id="previewSesudah"></div>
                             </div>
                         </div>
                     </div>
@@ -862,29 +960,41 @@ function generateKodeLaporan($pdo) {
         const scheduleSection = document.getElementById('schedule-section');
         const manualSection = document.getElementById('manual-section');
         
-        scheduleRadio.addEventListener('change', function() {
-            scheduleSection.style.display = 'block';
-            manualSection.style.display = 'none';
-            document.querySelectorAll('#manual-section input, #manual-section select').forEach(el => {
-                el.disabled = true;
-            });
-            document.querySelectorAll('#schedule-section input').forEach(el => {
-                el.disabled = false;
-                if (el.type === 'radio') el.required = true;
-            });
-        });
+        function toggleSections() {
+            if (scheduleRadio.checked) {
+                scheduleSection.style.display = 'block';
+                manualSection.style.display = 'none';
+                // Disable manual inputs
+                document.querySelectorAll('#manual-section select').forEach(el => {
+                    el.disabled = true;
+                    el.required = false;
+                });
+                // Enable schedule inputs
+                document.querySelectorAll('#schedule-section input[type="radio"]').forEach(el => {
+                    el.disabled = false;
+                    el.required = true;
+                });
+            } else {
+                scheduleSection.style.display = 'none';
+                manualSection.style.display = 'block';
+                // Disable schedule inputs
+                document.querySelectorAll('#schedule-section input[type="radio"]').forEach(el => {
+                    el.disabled = true;
+                    el.required = false;
+                });
+                // Enable manual inputs
+                document.querySelectorAll('#manual-section select').forEach(el => {
+                    el.disabled = false;
+                    el.required = true;
+                });
+            }
+        }
         
-        manualRadio.addEventListener('change', function() {
-            scheduleSection.style.display = 'none';
-            manualSection.style.display = 'block';
-            document.querySelectorAll('#schedule-section input').forEach(el => {
-                el.disabled = true;
-                if (el.type === 'radio') el.required = false;
-            });
-            document.querySelectorAll('#manual-section input, #manual-section select').forEach(el => {
-                el.disabled = false;
-            });
-        });
+        scheduleRadio.addEventListener('change', toggleSections);
+        manualRadio.addEventListener('change', toggleSections);
+        
+        // Initialize
+        toggleSections();
         
         // Jadwal card selection
         document.querySelectorAll('.jadwal-radio').forEach(radio => {
@@ -893,19 +1003,21 @@ function generateKodeLaporan($pdo) {
                     card.classList.remove('selected');
                 });
                 if (this.checked) {
-                    this.parentElement.classList.add('selected');
+                    this.closest('.jadwal-card').classList.add('selected');
                 }
             });
         });
         
         // Rating stars
-        const ratingStars = document.querySelectorAll('#ratingStars .fa-star');
+        const ratingStars = document.querySelectorAll('.star-rating');
         const ratingInput = document.getElementById('ratingInput');
+        const ratingText = document.getElementById('rating-text');
         
         ratingStars.forEach(star => {
             star.addEventListener('click', function() {
-                const value = this.getAttribute('data-value');
+                const value = parseInt(this.getAttribute('data-value'));
                 ratingInput.value = value;
+                ratingText.textContent = value;
                 
                 // Update stars display
                 ratingStars.forEach((s, index) => {
@@ -921,20 +1033,17 @@ function generateKodeLaporan($pdo) {
         });
         
         // Initialize rating stars
-        const initialRating = ratingInput.value;
         ratingStars.forEach((star, index) => {
-            if (index < initialRating) {
+            if (index < 5) {
                 star.classList.add('fas');
-                star.classList.remove('far');
             } else {
                 star.classList.add('far');
-                star.classList.remove('fas');
             }
         });
         
-        // Image preview for all file inputs
+        // Image preview function
         function setupImagePreview(inputId, previewId) {
-            const fileInput = document.querySelector(`input[name="${inputId}"]`);
+            const fileInput = document.getElementById(inputId);
             const previewContainer = document.getElementById(previewId);
             
             if (fileInput && previewContainer) {
@@ -951,22 +1060,24 @@ function generateKodeLaporan($pdo) {
                         
                         const reader = new FileReader();
                         
-                        reader.addEventListener('load', function() {
+                        reader.onload = function(e) {
                             previewContainer.innerHTML = `
-                                <img src="${reader.result}" alt="Preview" class="img-thumbnail">
-                                <div class="mt-2">
-                                    <button type="button" class="btn btn-sm btn-outline-danger remove-preview">
-                                        <i class="fas fa-trash me-1"></i>Hapus
-                                    </button>
+                                <div class="card">
+                                    <img src="${e.target.result}" class="card-img-top" alt="Preview">
+                                    <div class="card-body p-2 text-center">
+                                        <button type="button" class="btn btn-sm btn-outline-danger remove-preview">
+                                            <i class="fas fa-trash me-1"></i>Hapus
+                                        </button>
+                                    </div>
                                 </div>
                             `;
                             
-                            // Remove preview button
+                            // Add remove functionality
                             previewContainer.querySelector('.remove-preview').addEventListener('click', function() {
                                 fileInput.value = '';
                                 previewContainer.innerHTML = '';
                             });
-                        });
+                        };
                         
                         reader.readAsDataURL(file);
                     } else {
@@ -976,22 +1087,21 @@ function generateKodeLaporan($pdo) {
             }
         }
         
-        // Setup previews for all file inputs
-        setupImagePreview('foto_bukti', 'previewBukti');
-        setupImagePreview('foto_sebelum', 'previewSebelum');
-        setupImagePreview('foto_sesudah', 'previewSesudah');
+        // Setup image previews
+        setupImagePreview('fotoBukti', 'previewBukti');
+        setupImagePreview('fotoSebelum', 'previewSebelum');
+        setupImagePreview('fotoSesudah', 'previewSesudah');
         
-        // Set default time to now
+        // Set default time to now if empty
+        const jamMulaiInput = document.querySelector('input[name="jam_mulai"]');
+        const jamSelesaiInput = document.querySelector('input[name="jam_selesai"]');
+        
         function getCurrentTime() {
             const now = new Date();
             const hours = now.getHours().toString().padStart(2, '0');
             const minutes = now.getMinutes().toString().padStart(2, '0');
             return `${hours}:${minutes}`;
         }
-        
-        // Set jam mulai to current time if empty
-        const jamMulaiInput = document.querySelector('input[name="jam_mulai"]');
-        const jamSelesaiInput = document.querySelector('input[name="jam_selesai"]');
         
         if (jamMulaiInput && !jamMulaiInput.value) {
             jamMulaiInput.value = getCurrentTime();

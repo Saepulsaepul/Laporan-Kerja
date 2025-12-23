@@ -31,28 +31,44 @@ $search_query = $_GET['search'] ?? '';
 $sql = "
     SELECT 
         r.*,
+        r.id as report_id,
+        r.nomor_kunjungan,
+        r.kode_laporan,
+        r.keterangan,
+        r.bahan_digunakan,
+        r.hasil_pengamatan,
+        r.rekomendasi,
+        r.foto_bukti,
+        r.foto_sebelum,
+        r.foto_sesudah,
+        r.tanggal_pelaporan,
+        r.jam_mulai,
+        r.jam_selesai,
+        r.rating_customer,
+        r.created_at,
         c.nama_customer,
         c.nama_perusahaan,
-        c.telepon,
+        c.telepon as customer_telepon,
+        c.alamat as customer_alamat,
         s.nama_service,
+        s.kode_service,
         j.tanggal as jadwal_tanggal,
         j.jam as jadwal_jam,
-        j.lokasi as jadwal_lokasi
+        j.lokasi as jadwal_lokasi,
+        j.prioritas as jadwal_prioritas,
+        j.jenis_periode as jadwal_periode,
+        j.jumlah_kunjungan as jadwal_total_kunjungan,
+        j.kunjungan_berjalan as jadwal_kunjungan_berjalan,
+        j.catatan_admin as jadwal_catatan
     FROM reports r
+    INNER JOIN customers c ON r.customer_id = c.id
+    INNER JOIN services s ON r.service_id = s.id
     LEFT JOIN jadwal j ON r.jadwal_id = j.id
-    LEFT JOIN customers c ON j.customer_id = c.id OR r.customer_id = c.id
-    LEFT JOIN services s ON j.service_id = s.id
     WHERE r.user_id = ?
 ";
 
 $params = [$user_id];
 $conditions = [];
-
-// Filter status
-if ($filter_status && $filter_status !== 'all') {
-    $conditions[] = "r.status = ?";
-    $params[] = $filter_status;
-}
 
 // Filter tanggal
 if ($filter_date_from) {
@@ -89,33 +105,57 @@ $per_page = 10;
 $offset = ($page - 1) * $per_page;
 
 try {
-    // Hitung total data (tanpa LIMIT)
-    $count_sql = str_replace(
-        "SELECT r.*, c.nama_customer, c.nama_perusahaan, c.telepon, s.nama_service, j.tanggal as jadwal_tanggal, j.jam as jadwal_jam, j.lokasi as jadwal_lokasi",
-        "SELECT COUNT(*) as total",
-        $sql
-    );
+    // HITUNG TOTAL DATA - PERBAIKAN DI SINI
+    $count_sql = "SELECT COUNT(*) FROM reports r 
+                  INNER JOIN customers c ON r.customer_id = c.id 
+                  INNER JOIN services s ON r.service_id = s.id 
+                  WHERE r.user_id = :user_id";
     
-    $stmt = $pdo->prepare($count_sql);
-    $stmt->execute($params);
-    $total_records = $stmt->fetchColumn();
-
-    // Tambahkan LIMIT untuk data
+    $count_conditions = [];
+    $count_params = [':user_id' => $user_id];
+    
+    // Tambahkan kondisi yang sama
+    if ($filter_date_from) {
+        $count_conditions[] = "r.tanggal_pelaporan >= :date_from";
+        $count_params[':date_from'] = $filter_date_from;
+    }
+    
+    if ($filter_date_to) {
+        $count_conditions[] = "r.tanggal_pelaporan <= :date_to";
+        $count_params[':date_to'] = $filter_date_to;
+    }
+    
+    if ($search_query) {
+        $count_conditions[] = "(c.nama_customer LIKE :search OR c.nama_perusahaan LIKE :search2 OR r.kode_laporan LIKE :search3 OR s.nama_service LIKE :search4)";
+        $count_params[':search'] = "%" . $search_query . "%";
+        $count_params[':search2'] = "%" . $search_query . "%";
+        $count_params[':search3'] = "%" . $search_query . "%";
+        $count_params[':search4'] = "%" . $search_query . "%";
+    }
+    
+    if (!empty($count_conditions)) {
+        $count_sql .= " AND " . implode(" AND ", $count_conditions);
+    }
+    
+    $stmt_count = $pdo->prepare($count_sql);
+    $stmt_count->execute($count_params);
+    $total_records = $stmt_count->fetchColumn();
+    
+    // AMBIL DATA DENGAN PAGINATION
     $sql .= " LIMIT " . $per_page . " OFFSET " . $offset;
-
+    
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $reports = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
+    
     // Hitung total halaman
     $total_pages = ceil($total_records / $per_page);
-
+    
 } catch (PDOException $e) {
     $error = "Gagal mengambil data laporan: " . $e->getMessage();
-    error_log("Error my_reports: " . $e->getMessage());
+    error_log("Error my_reports: " . $e->getMessage() . "\nSQL: " . $sql);
 }
 
-// Fungsi helper untuk format tanggal
 
 // Fungsi untuk menampilkan rating stars
 function displayRating($rating) {
@@ -131,49 +171,58 @@ function displayRating($rating) {
     return $html;
 }
 
-// Proses hapus laporan
-if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
-    $report_id = (int)$_POST['report_id'];
+// Fungsi untuk badge priority
+function getPriorityBadge($priority) {
+    $priority = strtolower($priority);
+    $badges = [
+        'rendah' => 'bg-secondary',
+        'sedang' => 'bg-info',
+        'tinggi' => 'bg-warning',
+        'darurat' => 'bg-danger'
+    ];
     
-    try {
-        // Cek apakah laporan milik user ini
-        $stmt = $pdo->prepare("SELECT id FROM reports WHERE id = ? AND user_id = ?");
-        $stmt->execute([$report_id, $user_id]);
-        
-        if ($stmt->rowCount() > 0) {
-            // Hapus file foto terlebih dahulu
-            $stmt = $pdo->prepare("SELECT foto_bukti, foto_sebelum, foto_sesudah FROM reports WHERE id = ?");
-            $stmt->execute([$report_id]);
-            $report_files = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            // Hapus file fisik
-            $upload_dir = '../assets/uploads/';
-            if ($report_files['foto_bukti'] && file_exists($upload_dir . $report_files['foto_bukti'])) {
-                unlink($upload_dir . $report_files['foto_bukti']);
-            }
-            if ($report_files['foto_sebelum'] && file_exists($upload_dir . $report_files['foto_sebelum'])) {
-                unlink($upload_dir . $report_files['foto_sebelum']);
-            }
-            if ($report_files['foto_sesudah'] && file_exists($upload_dir . $report_files['foto_sesudah'])) {
-                unlink($upload_dir . $report_files['foto_sesudah']);
-            }
-            
-            // Hapus laporan dari database
-            $stmt = $pdo->prepare("DELETE FROM reports WHERE id = ?");
-            $stmt->execute([$report_id]);
-            
-            $success = "Laporan berhasil dihapus!";
-            
-            // Redirect untuk refresh data
-            header("Location: my_reports.php?deleted=true");
-            exit();
-        } else {
-            $error = "Laporan tidak ditemukan atau tidak memiliki akses!";
-        }
-        
-    } catch (PDOException $e) {
-        $error = "Gagal menghapus laporan: " . $e->getMessage();
-    }
+    return $badges[$priority] ?? 'bg-secondary';
+}
+
+// Fungsi untuk badge period
+function getPeriodBadge($period) {
+    $period = strtolower($period);
+    $badges = [
+        'sekali' => 'bg-secondary',
+        'harian' => 'bg-primary',
+        'mingguan' => 'bg-success',
+        'bulanan' => 'bg-info',
+        'tahunan' => 'bg-warning'
+    ];
+    
+    return $badges[$period] ?? 'bg-secondary';
+}
+
+// Hitung statistik untuk dashboard
+try {
+    // Total laporan
+    $stmt_total = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE user_id = ?");
+    $stmt_total->execute([$user_id]);
+    $total_count = $stmt_total->fetchColumn();
+    
+    // Laporan bulan ini
+    $stmt_month = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE user_id = ? AND MONTH(tanggal_pelaporan) = MONTH(CURDATE()) AND YEAR(tanggal_pelaporan) = YEAR(CURDATE())");
+    $stmt_month->execute([$user_id]);
+    $monthly_count = $stmt_month->fetchColumn();
+    
+    // Laporan hari ini
+    $stmt_today = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE user_id = ? AND DATE(tanggal_pelaporan) = CURDATE()");
+    $stmt_today->execute([$user_id]);
+    $today_count = $stmt_today->fetchColumn();
+    
+    // Rating rata-rata
+    $stmt_rating = $pdo->prepare("SELECT AVG(rating_customer) FROM reports WHERE user_id = ? AND rating_customer > 0");
+    $stmt_rating->execute([$user_id]);
+    $avg_rating = $stmt_rating->fetchColumn();
+    $avg_rating = $avg_rating ? round($avg_rating, 1) : 0;
+    
+} catch (PDOException $e) {
+    $total_count = $monthly_count = $today_count = $avg_rating = 0;
 }
 ?>
 
@@ -412,17 +461,13 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
         }
         
         /* Badges */
-        .status-badge {
-            padding: 5px 12px;
-            border-radius: 20px;
+        .badge-kunjungan {
+            background: #6f42c1;
+            color: white;
             font-size: 0.75rem;
-            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 10px;
         }
-        
-        .badge-draft { background: #fff3cd; color: #856404; }
-        .badge-submitted { background: #d1ecf1; color: #0c5460; }
-        .badge-reviewed { background: #d4edda; color: #155724; }
-        .badge-rejected { background: #f8d7da; color: #721c24; }
         
         /* Buttons */
         .btn-primary-custom {
@@ -493,6 +538,61 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
         }
         
+        .modal-header {
+            border-bottom: 2px solid var(--primary-color);
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+        
+        .modal-section {
+            padding: 15px 0;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .modal-section:last-child {
+            border-bottom: none;
+        }
+        
+        .modal-label {
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-bottom: 5px;
+        }
+        
+        .modal-value {
+            color: #495057;
+            line-height: 1.6;
+        }
+        
+        .modal-photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+        
+        .modal-photo-item {
+            text-align: center;
+        }
+        
+        .modal-photo {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.3s ease;
+        }
+        
+        .modal-photo:hover {
+            transform: scale(1.05);
+        }
+        
+        .modal-photo-caption {
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+        
         /* Footer */
         .footer {
             background: linear-gradient(135deg, var(--dark-color) 0%, #495057 100%);
@@ -536,6 +636,16 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
             .report-actions {
                 width: 100%;
                 justify-content: flex-end;
+            }
+            
+            .modal-photo-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 576px) {
+            .modal-photo-grid {
+                grid-template-columns: 1fr;
             }
         }
     </style>
@@ -612,14 +722,6 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
             </div>
         <?php endif; ?>
 
-        <?php if (isset($_GET['deleted']) && $_GET['deleted'] == 'true'): ?>
-            <div class="alert alert-success alert-custom alert-dismissible fade show" role="alert">
-                <i class="fas fa-check-circle me-2"></i>
-                Laporan berhasil dihapus!
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-        <?php endif; ?>
-
         <!-- Stats Overview -->
         <div class="row mb-4">
             <div class="col-md-3 col-sm-6">
@@ -627,26 +729,11 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                     <div class="stats-icon">
                         <i class="fas fa-file-alt"></i>
                     </div>
-                    <div class="stats-value"><?php echo $total_records ?? 0; ?></div>
+                    <div class="stats-value"><?php echo $total_count; ?></div>
                     <div class="stats-label">Total Laporan</div>
                 </div>
             </div>
             <div class="col-md-3 col-sm-6">
-                <?php
-                // Hitung laporan bulan ini
-                try {
-                    $stmt = $pdo->prepare("
-                        SELECT COUNT(*) FROM reports 
-                        WHERE user_id = ? 
-                        AND MONTH(tanggal_pelaporan) = MONTH(CURDATE()) 
-                        AND YEAR(tanggal_pelaporan) = YEAR(CURDATE())
-                    ");
-                    $stmt->execute([$user_id]);
-                    $monthly_count = $stmt->fetchColumn();
-                } catch (PDOException $e) {
-                    $monthly_count = 0;
-                }
-                ?>
                 <div class="stats-card">
                     <div class="stats-icon">
                         <i class="fas fa-calendar-week"></i>
@@ -656,20 +743,6 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                 </div>
             </div>
             <div class="col-md-3 col-sm-6">
-                <?php
-                // Hitung laporan hari ini
-                try {
-                    $stmt = $pdo->prepare("
-                        SELECT COUNT(*) FROM reports 
-                        WHERE user_id = ? 
-                        AND DATE(tanggal_pelaporan) = CURDATE()
-                    ");
-                    $stmt->execute([$user_id]);
-                    $today_count = $stmt->fetchColumn();
-                } catch (PDOException $e) {
-                    $today_count = 0;
-                }
-                ?>
                 <div class="stats-card">
                     <div class="stats-icon">
                         <i class="fas fa-calendar-day"></i>
@@ -678,62 +751,30 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                     <div class="stats-label">Hari Ini</div>
                 </div>
             </div>
-            <!-- <div class="col-md-3 col-sm-6">
-                <?php
-                // Hitung rata-rata rating
-                try {
-                    $stmt = $pdo->prepare("
-                        SELECT AVG(rating_customer) FROM reports 
-                        WHERE user_id = ? AND rating_customer > 0
-                    ");
-                    $stmt->execute([$user_id]);
-                    $avg_rating = $stmt->fetchColumn();
-                    $avg_rating = $avg_rating ? round($avg_rating, 1) : 0;
-                } catch (PDOException $e) {
-                    $avg_rating = 0;
-                }
-                ?>
-                <div class="stats-card">
-                    <div class="stats-icon">
-                        <i class="fas fa-star"></i>
-                    </div>
-                    <div class="stats-value"><?php echo $avg_rating; ?>/5</div>
-                    <div class="stats-label">Rating Rata-rata</div>
-                </div>
-            </div> -->
+            <div class="col-md-3 col-sm-6">
+            </div>
         </div>
 
         <!-- Filter Section -->
         <div class="filter-card">
             <form method="GET" action="" class="row g-3">
-                <div class="col-md-3">
-                    <label class="form-label fw-bold">Status</label>
-                    <select name="status" class="form-select">
-                        <option value="all">Semua Status</option>
-                        <option value="draft" <?php echo ($filter_status == 'draft') ? 'selected' : ''; ?>>Draft</option>
-                        <option value="submitted" <?php echo ($filter_status == 'submitted') ? 'selected' : ''; ?>>Submitted</option>
-                        <option value="reviewed" <?php echo ($filter_status == 'reviewed') ? 'selected' : ''; ?>>Reviewed</option>
-                        <option value="rejected" <?php echo ($filter_status == 'rejected') ? 'selected' : ''; ?>>Rejected</option>
-                    </select>
-                </div>
-                
-                <div class="col-md-3">
+                <div class="col-md-4">
                     <label class="form-label fw-bold">Dari Tanggal</label>
                     <input type="date" name="date_from" class="form-control" 
                            value="<?php echo htmlspecialchars($filter_date_from); ?>">
                 </div>
                 
-                <div class="col-md-3">
+                <div class="col-md-4">
                     <label class="form-label fw-bold">Sampai Tanggal</label>
                     <input type="date" name="date_to" class="form-control" 
                            value="<?php echo htmlspecialchars($filter_date_to); ?>">
                 </div>
                 
-                <div class="col-md-3">
+                <div class="col-md-4">
                     <label class="form-label fw-bold">Cari</label>
                     <div class="input-group">
                         <input type="text" name="search" class="form-control" 
-                               placeholder="Cari customer/layanan..." 
+                               placeholder="Cari customer/layanan/kode..." 
                                value="<?php echo htmlspecialchars($search_query); ?>">
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-search"></i>
@@ -758,15 +799,15 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                 <?php if (empty($reports)): ?>
                     <div class="empty-state">
                         <i class="fas fa-clipboard-list"></i>
-                        <h4 class="mb-3"><?php echo ($search_query || $filter_status || $filter_date_from || $filter_date_to) ? 'Tidak Ada Laporan yang Cocok' : 'Belum Ada Laporan'; ?></h4>
+                        <h4 class="mb-3"><?php echo ($search_query || $filter_date_from || $filter_date_to) ? 'Tidak Ada Laporan yang Cocok' : 'Belum Ada Laporan'; ?></h4>
                         <p class="mb-4">
-                            <?php if ($search_query || $filter_status || $filter_date_from || $filter_date_to): ?>
+                            <?php if ($search_query || $filter_date_from || $filter_date_to): ?>
                                 Tidak ada laporan yang sesuai dengan filter yang Anda pilih.
                             <?php else: ?>
-                                Anda belum membuat laporan pekerjaan.
+                                Anda belum membuat laporan pekerjaan. Mulai dengan membuat laporan baru.
                             <?php endif; ?>
                         </p>
-                        <?php if ($search_query || $filter_status || $filter_date_from || $filter_date_to): ?>
+                        <?php if ($search_query || $filter_date_from || $filter_date_to): ?>
                             <a href="my_reports.php" class="btn btn-outline-custom me-2">
                                 <i class="fas fa-redo me-2"></i>Reset Filter
                             </a>
@@ -789,13 +830,21 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                             }
                         }
                         
-                        // Status badge class
-                        $status_class = 'badge-' . strtolower($report['status'] ?? 'submitted');
+                        // Info kunjungan untuk jadwal berulang
+                        $visit_info = '';
+                        if (!empty($report['jadwal_periode']) && $report['jadwal_periode'] != 'Sekali') {
+                            $visit_info = 'Kunjungan ' . $report['nomor_kunjungan'] . '/' . $report['jadwal_total_kunjungan'];
+                        }
                     ?>
                         <div class="report-card">
                             <div class="report-header">
                                 <div>
-                                    <div class="report-code"><?php echo htmlspecialchars($report['kode_laporan'] ?? 'RPT-'.$report['id']); ?></div>
+                                    <div class="report-code">
+                                        <?php echo htmlspecialchars($report['kode_laporan'] ?? 'RPT-'.$report['id']); ?>
+                                        <?php if (!empty($visit_info)): ?>
+                                            <span class="badge-kunjungan ms-2"><?php echo $visit_info; ?></span>
+                                        <?php endif; ?>
+                                    </div>
                                     <div class="report-date">
                                         <i class="far fa-calendar me-1"></i>
                                         <?php echo formatTanggalIndonesia($report['tanggal_pelaporan'] ?? ''); ?>
@@ -805,16 +854,20 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                                         <?php endif; ?>
                                     </div>
                                 </div>
-                                <span class="status-badge <?php echo $status_class; ?>">
-                                    <?php echo ucfirst($report['status'] ?? 'Submitted'); ?>
-                                </span>
+                                <div>
+                                    <?php if (!empty($report['jadwal_prioritas'])): ?>
+                                        <span class="badge <?php echo getPriorityBadge($report['jadwal_prioritas']); ?>">
+                                            <?php echo ucfirst($report['jadwal_prioritas']); ?>
+                                        </span>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                             
                             <div class="report-customer">
                                 <?php echo htmlspecialchars($customer_name); ?>
-                                <?php if (!empty($report['telepon'])): ?>
+                                <?php if (!empty($report['customer_telepon'])): ?>
                                     <span class="text-muted small ms-2">
-                                        <i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($report['telepon']); ?>
+                                        <i class="fas fa-phone me-1"></i><?php echo htmlspecialchars($report['customer_telepon']); ?>
                                     </span>
                                 <?php endif; ?>
                             </div>
@@ -822,6 +875,9 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                             <div class="report-service">
                                 <i class="fas fa-tools me-1"></i>
                                 <?php echo htmlspecialchars($report['nama_service'] ?? 'Layanan Pest Control'); ?>
+                                <?php if (!empty($report['kode_service'])): ?>
+                                    <span class="text-muted">(<?php echo htmlspecialchars($report['kode_service']); ?>)</span>
+                                <?php endif; ?>
                             </div>
                             
                             <div class="report-excerpt">
@@ -866,23 +922,11 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                                 </div>
                                 
                                 <div class="report-actions">
-                                    <!-- <?php if ($report['rating_customer']): ?>
-                                        <div class="me-2">
-                                            <?php echo displayRating($report['rating_customer']); ?>
-                                        </div>
-                                    <?php endif; ?>
-                                     -->
-                                    <a href="view_report.php?id=<?php echo $report['id']; ?>" 
-                                       class="btn btn-sm btn-outline-custom" title="Lihat Detail">
-                                        <i class="fas fa-eye"></i>
-                                    </a>
-                                    
-                                    <button type="button" class="btn btn-sm btn-outline-danger" 
-                                            data-bs-toggle="modal" data-bs-target="#deleteModal"
-                                            data-report-id="<?php echo $report['id']; ?>"
-                                            data-report-code="<?php echo htmlspecialchars($report['kode_laporan'] ?? 'RPT-'.$report['id']); ?>"
-                                            title="Hapus Laporan">
-                                        <i class="fas fa-trash"></i>
+                                    <!-- Tombol untuk melihat detail dengan modal -->
+                                    <button type="button" class="btn btn-sm btn-primary-custom" 
+                                            data-bs-toggle="modal" data-bs-target="#detailModal"
+                                            onclick="loadReportDetail(<?php echo $report['report_id']; ?>)">
+                                        <i class="fas fa-eye me-1"></i>Lihat Detail
                                     </button>
                                 </div>
                             </div>
@@ -949,13 +993,11 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
             <div class="row align-items-center">
                 <div class="col-md-6 text-center text-md-start">
                     <h5 class="mb-2"><i class="fas fa-bug me-2"></i>Pest Control System</h5>
-                    <p class="mb-0">PT. Rexon Mitra Prima - Jasa Pembasmi Hama Profesional</p>
+                    <p class="mb-0">Sistem Manajemen Laporan Pest Control</p>
                 </div>
                 <div class="col-md-6 text-center text-md-end">
                     <p class="mb-0">
-                        <i class="fas fa-phone me-1"></i> 0812-3456-7890
-                        <span class="mx-2">•</span>
-                        <i class="fas fa-envelope me-1"></i> info@rexonpestcontrol.com
+                        <i class="fas fa-calendar me-1"></i> <?php echo date('d F Y'); ?>
                     </p>
                     <small>&copy; <?php echo date('Y'); ?> All rights reserved.</small>
                 </div>
@@ -979,33 +1021,29 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
         </div>
     </div>
 
-    <!-- Delete Confirmation Modal -->
-    <div class="modal fade" id="deleteModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
+    <!-- Detail Report Modal -->
+    <div class="modal fade" id="detailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title text-danger">
-                        <i class="fas fa-exclamation-triangle me-2"></i>Konfirmasi Hapus
+                    <h5 class="modal-title text-primary">
+                        <i class="fas fa-file-alt me-2"></i>Detail Laporan
                     </h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body">
-                    <p>Apakah Anda yakin ingin menghapus laporan <strong id="deleteReportCode"></strong>?</p>
-                    <p class="text-danger small">
-                        <i class="fas fa-exclamation-circle me-1"></i>
-                        Tindakan ini tidak dapat dibatalkan. Semua data laporan akan dihapus permanen.
-                    </p>
+                <div class="modal-body" id="detailModalBody">
+                    <!-- Konten akan dimuat via AJAX -->
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-3">Memuat data laporan...</p>
+                    </div>
                 </div>
                 <div class="modal-footer">
-                    <form method="POST" action="" style="display: inline;">
-                        <input type="hidden" name="report_id" id="deleteReportId">
-                        <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">
-                            <i class="fas fa-times me-2"></i>Batal
-                        </button>
-                        <button type="submit" name="delete_report" class="btn btn-danger">
-                            <i class="fas fa-trash me-2"></i>Hapus
-                        </button>
-                    </form>
+                    <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">
+                        <i class="fas fa-times me-2"></i>Tutup
+                    </button>
                 </div>
             </div>
         </div>
@@ -1024,19 +1062,6 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
                 const photoUrl = button.getAttribute('data-photo');
                 const modalImg = document.getElementById('modalPhoto');
                 modalImg.src = photoUrl;
-            });
-        }
-        
-        // Delete Confirmation Modal
-        const deleteModal = document.getElementById('deleteModal');
-        if (deleteModal) {
-            deleteModal.addEventListener('show.bs.modal', function(event) {
-                const button = event.relatedTarget;
-                const reportId = button.getAttribute('data-report-id');
-                const reportCode = button.getAttribute('data-report-code');
-                
-                document.getElementById('deleteReportId').value = reportId;
-                document.getElementById('deleteReportCode').textContent = reportCode;
             });
         }
         
@@ -1059,6 +1084,50 @@ if (isset($_POST['delete_report']) && isset($_POST['report_id'])) {
             dateFrom.max = today;
         }
     });
+    
+    // Fungsi untuk memuat detail laporan via AJAX
+    function loadReportDetail(reportId) {
+        const detailModalBody = document.getElementById('detailModalBody');
+        
+        // Tampilkan loading spinner
+        detailModalBody.innerHTML = `
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3">Memuat data laporan...</p>
+            </div>
+        `;
+        
+        // Fetch data via AJAX
+        fetch(`get_report_detail.php?id=${reportId}`)
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.text();
+            })
+            .then(html => {
+                detailModalBody.innerHTML = html;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                detailModalBody.innerHTML = `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Gagal memuat detail laporan. Silakan coba lagi.
+                    </div>
+                `;
+            });
+    }
+    
+    // Fungsi untuk melihat foto di modal foto
+    function viewPhoto(photoUrl) {
+        const modal = new bootstrap.Modal(document.getElementById('photoModal'));
+        const modalImg = document.getElementById('modalPhoto');
+        modalImg.src = photoUrl;
+        modal.show();
+    }
     </script>
 </body>
 </html>

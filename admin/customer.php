@@ -53,14 +53,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $gedung = sanitizeInput($_POST['gedung'] ?? '');
     $lantai = sanitizeInput($_POST['lantai'] ?? '');
     $unit = sanitizeInput($_POST['unit'] ?? '');
-    $jenis_layanan_id = isset($_POST['jenis_layanan_id']) ? (int)$_POST['jenis_layanan_id'] : null;
+    $keterangan = sanitizeInput($_POST['keterangan'] ?? '');
+    $status = sanitizeInput($_POST['status'] ?? 'Aktif');
+    $id = isset($_POST['id']) ? (int)$_POST['id'] : null;
+
+    // Data layanan (array untuk multiple selection)
+    $jenis_layanan_ids = isset($_POST['jenis_layanan_ids']) ? $_POST['jenis_layanan_ids'] : [];
     $tanggal_mulai_kontrak = sanitizeInput($_POST['tanggal_mulai_kontrak'] ?? '');
     $tanggal_selesai_kontrak = sanitizeInput($_POST['tanggal_selesai_kontrak'] ?? '');
     $nilai_kontrak = sanitizeInput($_POST['nilai_kontrak'] ?? '');
     $status_kontrak = sanitizeInput($_POST['status_kontrak'] ?? 'Aktif');
-    $keterangan = sanitizeInput($_POST['keterangan'] ?? '');
-    $status = sanitizeInput($_POST['status'] ?? 'Aktif');
-    $id = isset($_POST['id']) ? (int)$_POST['id'] : null;
 
     // Validasi input
     $errors = [];
@@ -77,6 +79,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     // Validasi email
     if (!empty($email) && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $errors[] = 'Format email tidak valid';
+    }
+
+    // Validasi minimal 1 layanan dipilih
+    if (empty($jenis_layanan_ids)) {
+        $errors[] = 'Minimal pilih satu jenis layanan';
     }
 
     // Format nilai kontrak
@@ -96,30 +103,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             // Format nilai kontrak
             $nilai_kontrak_formatted = !empty($nilai_kontrak) ? $nilai_kontrak : null;
             
+            // Mulai transaction
+            $pdo->beginTransaction();
+            
             if ($action === 'create') {
-                // Cek duplikasi
+                // Cek duplikasi customer
                 $stmt = $pdo->prepare("SELECT id FROM customers WHERE nama_perusahaan = ? AND nama_customer = ?");
                 $stmt->execute([$nama_perusahaan, $nama_customer]);
                 if ($stmt->fetch()) {
                     $_SESSION['error'] = 'Customer dengan nama perusahaan dan nama customer tersebut sudah ada!';
                 } else {
+                    // Insert customer
                     $stmt = $pdo->prepare("
                         INSERT INTO customers (
                             nama_perusahaan, nama_customer, telepon, email, alamat, 
-                            gedung, lantai, unit, jenis_layanan_id,
-                            tanggal_mulai_kontrak, tanggal_selesai_kontrak, 
-                            nilai_kontrak, status_kontrak, keterangan, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            gedung, lantai, unit, keterangan, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ");
                     
                     $stmt->execute([
                         $nama_perusahaan, $nama_customer, $telepon, $email, $alamat,
-                        $gedung, $lantai, $unit, $jenis_layanan_id,
-                        $tanggal_mulai_kontrak ?: null, $tanggal_selesai_kontrak ?: null,
-                        $nilai_kontrak_formatted, $status_kontrak, $keterangan, $status
+                        $gedung, $lantai, $unit, $keterangan, $status
                     ]);
                     
-                    $_SESSION['success'] = 'Customer berhasil ditambahkan!';
+                    $customer_id = $pdo->lastInsertId();
+                    
+                    // Insert layanan yang dipilih
+                    foreach ($jenis_layanan_ids as $service_id) {
+                        $service_id = (int)$service_id;
+                        if ($service_id > 0) {
+                            $stmt = $pdo->prepare("
+                                INSERT INTO customer_services (
+                                    customer_id, service_id, tanggal_mulai, tanggal_selesai,
+                                    nilai_kontrak, status
+                                ) VALUES (?, ?, ?, ?, ?, ?)
+                            ");
+                            $stmt->execute([
+                                $customer_id, $service_id,
+                                $tanggal_mulai_kontrak ?: null,
+                                $tanggal_selesai_kontrak ?: null,
+                                $nilai_kontrak_formatted,
+                                $status_kontrak
+                            ]);
+                        }
+                    }
+                    
+                    $_SESSION['success'] = 'Customer berhasil ditambahkan dengan ' . count($jenis_layanan_ids) . ' layanan!';
                     error_log("Customer created: $nama_perusahaan - $nama_customer");
                 }
             } elseif ($action === 'update' && $id) {
@@ -129,24 +158,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 if ($stmt->fetch()) {
                     $_SESSION['error'] = 'Customer dengan nama perusahaan dan nama customer tersebut sudah ada!';
                 } else {
+                    // Update customer
                     $stmt = $pdo->prepare("
                         UPDATE customers SET 
                             nama_perusahaan = ?, nama_customer = ?, telepon = ?, email = ?, alamat = ?,
-                            gedung = ?, lantai = ?, unit = ?, jenis_layanan_id = ?,
-                            tanggal_mulai_kontrak = ?, tanggal_selesai_kontrak = ?,
-                            nilai_kontrak = ?, status_kontrak = ?, keterangan = ?, status = ?
+                            gedung = ?, lantai = ?, unit = ?, keterangan = ?, status = ?
                         WHERE id = ?
                     ");
                     $stmt->execute([
                         $nama_perusahaan, $nama_customer, $telepon, $email, $alamat,
-                        $gedung, $lantai, $unit, $jenis_layanan_id,
-                        $tanggal_mulai_kontrak ?: null, $tanggal_selesai_kontrak ?: null,
-                        $nilai_kontrak_formatted, $status_kontrak, $keterangan, $status, $id
+                        $gedung, $lantai, $unit, $keterangan, $status, $id
                     ]);
-                    $_SESSION['success'] = 'Customer berhasil diperbarui!';
+                    
+                    // Hapus semua layanan lama
+                    $stmt = $pdo->prepare("DELETE FROM customer_services WHERE customer_id = ?");
+                    $stmt->execute([$id]);
+                    
+                    // Insert layanan baru
+                    foreach ($jenis_layanan_ids as $service_id) {
+                        $service_id = (int)$service_id;
+                        if ($service_id > 0) {
+                            $stmt = $pdo->prepare("
+                                INSERT INTO customer_services (
+                                    customer_id, service_id, tanggal_mulai, tanggal_selesai,
+                                    nilai_kontrak, status
+                                ) VALUES (?, ?, ?, ?, ?, ?)
+                            ");
+                            $stmt->execute([
+                                $id, $service_id,
+                                $tanggal_mulai_kontrak ?: null,
+                                $tanggal_selesai_kontrak ?: null,
+                                $nilai_kontrak_formatted,
+                                $status_kontrak
+                            ]);
+                        }
+                    }
+                    
+                    $_SESSION['success'] = 'Customer berhasil diperbarui dengan ' . count($jenis_layanan_ids) . ' layanan!';
                 }
             }
+            
+            $pdo->commit();
+            
         } catch (PDOException $e) {
+            $pdo->rollBack();
             $_SESSION['error'] = 'Terjadi masalah: ' . $e->getMessage();
             error_log("Database Error: " . $e->getMessage());
         }
@@ -179,8 +234,14 @@ if (isset($_GET['delete'])) {
             if ($scheduleCount > 0) $msgs[] = $scheduleCount . ' jadwal';
             $_SESSION['error'] = $msg . implode(' dan ', $msgs);
         } else {
+            // Hapus relasi layanan terlebih dahulu
+            $stmt = $pdo->prepare("DELETE FROM customer_services WHERE customer_id = ?");
+            $stmt->execute([$id]);
+            
+            // Hapus customer
             $stmt = $pdo->prepare("DELETE FROM customers WHERE id = ?");
             $stmt->execute([$id]);
+            
             $_SESSION['success'] = 'Customer berhasil dihapus!';
         }
     } catch (PDOException $e) {
@@ -203,12 +264,15 @@ try {
     $stmt = $pdo->query("
         SELECT 
             c.*,
-            s.nama_service,
-            s.kode_service,
+            GROUP_CONCAT(DISTINCT CONCAT(s.nama_service, ' (', s.kode_service, ')') SEPARATOR ', ') as services_list,
             (SELECT COUNT(r.id) FROM reports r WHERE r.customer_id = c.id) AS report_count,
-            (SELECT COUNT(j.id) FROM jadwal j WHERE j.customer_id = c.id) AS schedule_count
+            (SELECT COUNT(j.id) FROM jadwal j WHERE j.customer_id = c.id) AS schedule_count,
+            (SELECT COUNT(cs.id) FROM customer_services cs WHERE cs.customer_id = c.id) as service_count,
+            (SELECT GROUP_CONCAT(cs.service_id) FROM customer_services cs WHERE cs.customer_id = c.id) as service_ids
         FROM customers c
-        LEFT JOIN services s ON c.jenis_layanan_id = s.id
+        LEFT JOIN customer_services cs ON c.id = cs.customer_id
+        LEFT JOIN services s ON cs.service_id = s.id
+        GROUP BY c.id
         ORDER BY c.nama_perusahaan ASC, c.nama_customer ASC
     ");
 
@@ -216,15 +280,26 @@ try {
 
     // Jika edit
     $editCustomer = null;
+    $editCustomerServices = [];
     if (isset($_GET['edit'])) {
-        $stmt = $pdo->prepare("
-            SELECT c.*, s.nama_service 
-            FROM customers c 
-            LEFT JOIN services s ON c.jenis_layanan_id = s.id 
-            WHERE c.id = ?
-        ");
+        // Ambil data customer
+        $stmt = $pdo->prepare("SELECT * FROM customers WHERE id = ?");
         $stmt->execute([(int)$_GET['edit']]);
         $editCustomer = $stmt->fetch();
+        
+        // Ambil layanan yang dimiliki customer
+        if ($editCustomer) {
+            $stmt = $pdo->prepare("
+                SELECT cs.service_id, cs.tanggal_mulai, cs.tanggal_selesai, 
+                       cs.nilai_kontrak, cs.status, cs.keterangan,
+                       s.nama_service, s.kode_service
+                FROM customer_services cs
+                JOIN services s ON cs.service_id = s.id
+                WHERE cs.customer_id = ?
+            ");
+            $stmt->execute([$editCustomer['id']]);
+            $editCustomerServices = $stmt->fetchAll();
+        }
     }
 } catch (PDOException $e) {
     $error = "Gagal mengambil data: " . $e->getMessage();
@@ -243,7 +318,6 @@ if (!file_exists($header_path)) {
 require_once $header_path;
 ?>
 
-<!-- CSS tetap sama seperti sebelumnya -->
 <style>
     .customer-card {
         border: 1px solid #e9ecef;
@@ -273,6 +347,8 @@ require_once $header_path;
     .badge-layanan {
         font-size: 0.75rem;
         padding: 0.25rem 0.5rem;
+        margin-right: 0.25rem;
+        margin-bottom: 0.25rem;
     }
     .kontrak-info {
         background: #f8f9fa;
@@ -309,6 +385,16 @@ require_once $header_path;
     .kontrak-selesai { background: #cff4fc; color: #055160; }
     .kontrak-ditangguhkan { background: #fff3cd; color: #664d03; }
     .kontrak-dibatalkan { background: #f8d7da; color: #842029; }
+    .services-container {
+        max-height: 200px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        padding: 10px;
+    }
+    .service-checkbox {
+        margin-bottom: 8px;
+    }
 </style>
 
 <?php 
@@ -368,12 +454,11 @@ if (file_exists($navbar_path)) {
                             </select>
                         </div>
                         <div class="col-md-3">
-                            <select id="kontrakFilter" class="form-select">
-                                <option value="">Semua Status Kontrak</option>
-                                <option value="Aktif">Kontrak Aktif</option>
-                                <option value="Selesai">Kontrak Selesai</option>
-                                <option value="Ditangguhkan">Ditangguhkan</option>
-                                <option value="Dibatalkan">Dibatalkan</option>
+                            <select id="serviceFilter" class="form-select">
+                                <option value="">Semua Layanan</option>
+                                <?php foreach ($services as $service): ?>
+                                    <option value="<?= $service['id'] ?>"><?= htmlspecialchars($service['nama_service']) ?></option>
+                                <?php endforeach; ?>
                             </select>
                         </div>
                         <div class="col-md-2">
@@ -399,19 +484,29 @@ if (file_exists($navbar_path)) {
                 <div class="row" id="customerContainer">
                     <?php foreach ($allCustomers as $cust): ?>
                         <?php 
-                        // Format tanggal kontrak
-                        $tgl_mulai = !empty($cust['tanggal_mulai_kontrak']) ? formatTanggalIndonesia($cust['tanggal_mulai_kontrak']) : '-';
-                        $tgl_selesai = !empty($cust['tanggal_selesai_kontrak']) ? formatTanggalIndonesia($cust['tanggal_selesai_kontrak']) : '-';
-                        $nilai_kontrak = !empty($cust['nilai_kontrak']) ? 'Rp ' . number_format($cust['nilai_kontrak'], 0, ',', '.') : '-';
+                        // Ambil data kontrak dari relasi pertama (jika ada)
+                        $stmtKontrak = $pdo->prepare("
+                            SELECT tanggal_mulai, tanggal_selesai, nilai_kontrak, status 
+                            FROM customer_services 
+                            WHERE customer_id = ? 
+                            LIMIT 1
+                        ");
+                        $stmtKontrak->execute([$cust['id']]);
+                        $kontrak = $stmtKontrak->fetch();
+                        
+                        $tgl_mulai = !empty($kontrak['tanggal_mulai']) ? formatTanggalIndonesia($kontrak['tanggal_mulai']) : '-';
+                        $tgl_selesai = !empty($kontrak['tanggal_selesai']) ? formatTanggalIndonesia($kontrak['tanggal_selesai']) : '-';
+                        $nilai_kontrak = !empty($kontrak['nilai_kontrak']) ? 'Rp ' . number_format($kontrak['nilai_kontrak'], 0, ',', '.') : '-';
+                        $status_kontrak = $kontrak['status'] ?? '-';
                         
                         // Status classes
                         $status_class = 'status-' . strtolower($cust['status']);
-                        $kontrak_class = 'kontrak-' . strtolower($cust['status_kontrak']);
+                        $kontrak_class = 'kontrak-' . strtolower($status_kontrak);
                         ?>
                         
                         <div class="col-xl-4 col-lg-6 mb-4 customer-item" 
                              data-status="<?= $cust['status'] ?>"
-                             data-kontrak="<?= $cust['status_kontrak'] ?>"
+                             data-services="<?= $cust['service_ids'] ?? '' ?>"
                              data-nama="<?= htmlspecialchars(strtolower($cust['nama_perusahaan'] . ' ' . $cust['nama_customer'])) ?>">
                             <div class="customer-card">
                                 <div class="customer-info">
@@ -424,14 +519,19 @@ if (file_exists($navbar_path)) {
                                                 <span class="status-badge <?= $status_class ?>">
                                                     <?= $cust['status'] ?>
                                                 </span>
+                                                <?php if ($status_kontrak != '-'): ?>
                                                 <span class="status-badge <?= $kontrak_class ?>">
-                                                    <?= $cust['status_kontrak'] ?>
+                                                    <?= $status_kontrak ?>
                                                 </span>
+                                                <?php endif; ?>
                                             </div>
                                         </div>
                                         <p class="mb-0 text-muted">
                                             <i class="fas fa-user me-1"></i>
                                             <?= htmlspecialchars($cust['nama_customer']) ?>
+                                            <span class="badge bg-secondary ms-2">
+                                                <i class="fas fa-cog me-1"></i><?= $cust['service_count'] ?> Layanan
+                                            </span>
                                         </p>
                                     </div>
 
@@ -480,28 +580,40 @@ if (file_exists($navbar_path)) {
                                     </div>
 
                                     <!-- Informasi Layanan -->
-                                    <?php if (!empty($cust['nama_service'])): ?>
+                                    <?php if (!empty($cust['services_list'])): ?>
                                         <div class="mb-3">
-                                            <span class="badge bg-info badge-layanan">
-                                                <i class="fas fa-cog me-1"></i>
-                                                <?= htmlspecialchars($cust['nama_service']) ?>
-                                                <?php if (!empty($cust['kode_service'])): ?>
-                                                    (<?= htmlspecialchars($cust['kode_service']) ?>)
-                                                <?php endif; ?>
-                                            </span>
+                                            <label class="form-label small text-muted mb-1">Layanan:</label>
+                                            <div class="d-flex flex-wrap">
+                                                <?php 
+                                                $services_list = explode(', ', $cust['services_list']);
+                                                foreach ($services_list as $service): 
+                                                    if (!empty(trim($service))):
+                                                ?>
+                                                    <span class="badge bg-info badge-layanan mb-1">
+                                                        <?= htmlspecialchars($service) ?>
+                                                    </span>
+                                                <?php 
+                                                    endif;
+                                                endforeach; 
+                                                ?>
+                                            </div>
                                         </div>
                                     <?php endif; ?>
 
                                     <!-- Informasi Kontrak -->
-                                    <?php if (!empty($cust['tanggal_mulai_kontrak']) || !empty($cust['nilai_kontrak'])): ?>
+                                    <?php if ($tgl_mulai != '-' || $nilai_kontrak != '-'): ?>
                                         <div class="kontrak-info">
+                                            <?php if ($tgl_mulai != '-'): ?>
                                             <p class="mb-1 small">
                                                 <strong>Kontrak:</strong> 
                                                 <?= $tgl_mulai ?> s/d <?= $tgl_selesai ?>
                                             </p>
+                                            <?php endif; ?>
+                                            <?php if ($nilai_kontrak != '-'): ?>
                                             <p class="mb-0 small">
                                                 <strong>Nilai:</strong> <?= $nilai_kontrak ?>
                                             </p>
+                                            <?php endif; ?>
                                         </div>
                                     <?php endif; ?>
 
@@ -509,7 +621,8 @@ if (file_exists($navbar_path)) {
                                     <?php if (!empty($cust['keterangan'])): ?>
                                         <p class="mt-3 mb-0 small text-muted">
                                             <i class="fas fa-info-circle me-1"></i>
-                                            <?= nl2br(htmlspecialchars($cust['keterangan'])) ?>
+                                            <?= nl2br(htmlspecialchars(substr($cust['keterangan'], 0, 100))) ?>
+                                            <?php if (strlen($cust['keterangan']) > 100): ?>...<?php endif; ?>
                                         </p>
                                     <?php endif; ?>
                                 </div>
@@ -566,7 +679,6 @@ if (file_exists($navbar_path)) {
 <div class="modal fade" id="customerModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
-            <!-- PERUBAHAN PENTING: form action sekarang ke customer.php -->
             <form method="POST" action="customer.php" id="customerForm">
                 <div class="modal-header">
                     <h5 class="modal-title">
@@ -664,57 +776,48 @@ if (file_exists($navbar_path)) {
                                    placeholder="Contoh: Unit 801, Area A">
                         </div>
 
-                        <!-- Informasi Layanan -->
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Jenis Layanan</label>
-                            <select name="jenis_layanan_id" class="form-select">
-                                <option value="">-- Pilih Layanan --</option>
+                        <!-- Informasi Layanan (MULTIPLE SELECTION) -->
+                        <div class="col-12">
+                            <label class="form-label fw-bold">Pilih Layanan <span class="text-danger">*</span></label>
+                            <small class="text-muted d-block mb-2">Centang satu atau lebih layanan yang dibutuhkan customer</small>
+                            <div class="services-container">
                                 <?php foreach ($services as $service): ?>
-                                    <option value="<?= $service['id'] ?>"
-                                        <?= ($editCustomer['jenis_layanan_id'] ?? '') == $service['id'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($service['nama_service']) ?> (<?= htmlspecialchars($service['kode_service']) ?>)
-                                    </option>
+                                    <?php 
+                                    $checked = false;
+                                    if ($editCustomer) {
+                                        foreach ($editCustomerServices as $custService) {
+                                            if ($custService['service_id'] == $service['id']) {
+                                                $checked = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    ?>
+                                    <div class="form-check service-checkbox">
+                                        <input class="form-check-input" 
+                                               type="checkbox" 
+                                               name="jenis_layanan_ids[]" 
+                                               value="<?= $service['id'] ?>"
+                                               id="service_<?= $service['id'] ?>"
+                                               <?= $checked ? 'checked' : '' ?>>
+                                        <label class="form-check-label" for="service_<?= $service['id'] ?>">
+                                            <strong><?= htmlspecialchars($service['nama_service']) ?></strong>
+                                            <small class="text-muted">(<?= htmlspecialchars($service['kode_service']) ?>)</small>
+                                        </label>
+                                    </div>
                                 <?php endforeach; ?>
-                            </select>
+                            </div>
                         </div>
 
                         <!-- Informasi Kontrak -->
                         <div class="col-md-6">
                             <label class="form-label fw-bold">Status Kontrak</label>
                             <select name="status_kontrak" class="form-select">
-                                <option value="Aktif" <?= ($editCustomer['status_kontrak'] ?? '') == 'Aktif' ? 'selected' : '' ?>>Aktif</option>
-                                <option value="Selesai" <?= ($editCustomer['status_kontrak'] ?? '') == 'Selesai' ? 'selected' : '' ?>>Selesai</option>
-                                <option value="Ditangguhkan" <?= ($editCustomer['status_kontrak'] ?? '') == 'Ditangguhkan' ? 'selected' : '' ?>>Ditangguhkan</option>
-                                <option value="Dibatalkan" <?= ($editCustomer['status_kontrak'] ?? '') == 'Dibatalkan' ? 'selected' : '' ?>>Dibatalkan</option>
+                                <option value="Aktif" <?= ($editCustomerServices[0]['status'] ?? '') == 'Aktif' ? 'selected' : '' ?>>Aktif</option>
+                                <option value="Selesai" <?= ($editCustomerServices[0]['status'] ?? '') == 'Selesai' ? 'selected' : '' ?>>Selesai</option>
+                                <option value="Ditangguhkan" <?= ($editCustomerServices[0]['status'] ?? '') == 'Ditangguhkan' ? 'selected' : '' ?>>Ditangguhkan</option>
+                                <option value="Dibatalkan" <?= ($editCustomerServices[0]['status'] ?? '') == 'Dibatalkan' ? 'selected' : '' ?>>Dibatalkan</option>
                             </select>
-                        </div>
-
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Tanggal Mulai Kontrak</label>
-                            <input type="date" 
-                                   name="tanggal_mulai_kontrak" 
-                                   class="form-control" 
-                                   value="<?= htmlspecialchars($editCustomer['tanggal_mulai_kontrak'] ?? '') ?>">
-                        </div>
-
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Tanggal Selesai Kontrak</label>
-                            <input type="date" 
-                                   name="tanggal_selesai_kontrak" 
-                                   class="form-control" 
-                                   value="<?= htmlspecialchars($editCustomer['tanggal_selesai_kontrak'] ?? '') ?>">
-                        </div>
-
-                        <div class="col-md-6">
-                            <label class="form-label fw-bold">Nilai Kontrak</label>
-                            <div class="input-group">
-                                <span class="input-group-text">Rp</span>
-                                <input type="text" 
-                                       name="nilai_kontrak" 
-                                       class="form-control" 
-                                       value="<?= !empty($editCustomer['nilai_kontrak']) ? number_format($editCustomer['nilai_kontrak'], 0, ',', '.') : '' ?>"
-                                       placeholder="Masukkan nilai kontrak">
-                            </div>
                         </div>
 
                         <div class="col-md-6">
@@ -724,6 +827,34 @@ if (file_exists($navbar_path)) {
                                 <option value="Nonaktif" <?= ($editCustomer['status'] ?? '') == 'Nonaktif' ? 'selected' : '' ?>>Nonaktif</option>
                                 <option value="Trial" <?= ($editCustomer['status'] ?? '') == 'Trial' ? 'selected' : '' ?>>Trial</option>
                             </select>
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Tanggal Mulai Kontrak</label>
+                            <input type="date" 
+                                   name="tanggal_mulai_kontrak" 
+                                   class="form-control" 
+                                   value="<?= htmlspecialchars($editCustomerServices[0]['tanggal_mulai'] ?? '') ?>">
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Tanggal Selesai Kontrak</label>
+                            <input type="date" 
+                                   name="tanggal_selesai_kontrak" 
+                                   class="form-control" 
+                                   value="<?= htmlspecialchars($editCustomerServices[0]['tanggal_selesai'] ?? '') ?>">
+                        </div>
+
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">Nilai Kontrak Total</label>
+                            <div class="input-group">
+                                <span class="input-group-text">Rp</span>
+                                <input type="text" 
+                                       name="nilai_kontrak" 
+                                       class="form-control" 
+                                       value="<?= !empty($editCustomerServices[0]['nilai_kontrak']) ? number_format($editCustomerServices[0]['nilai_kontrak'], 0, ',', '.') : '' ?>"
+                                       placeholder="Masukkan nilai kontrak total untuk semua layanan">
+                            </div>
                         </div>
 
                         <!-- Keterangan -->
@@ -768,25 +899,25 @@ if (file_exists($navbar_path)) {
         // Filter functionality
         const searchInput = document.getElementById('searchInput');
         const statusFilter = document.getElementById('statusFilter');
-        const kontrakFilter = document.getElementById('kontrakFilter');
+        const serviceFilter = document.getElementById('serviceFilter');
         const resetFilter = document.getElementById('resetFilter');
         const customerItems = document.querySelectorAll('.customer-item');
 
         function filterCustomers() {
             const searchTerm = searchInput.value.toLowerCase();
             const statusValue = statusFilter.value;
-            const kontrakValue = kontrakFilter.value;
+            const serviceValue = serviceFilter.value;
 
             customerItems.forEach(item => {
                 const nama = item.dataset.nama;
                 const status = item.dataset.status;
-                const kontrak = item.dataset.kontrak;
+                const services = item.dataset.services || '';
 
                 const matchesSearch = nama.includes(searchTerm);
                 const matchesStatus = !statusValue || status === statusValue;
-                const matchesKontrak = !kontrakValue || kontrak === kontrakValue.toLowerCase();
+                const matchesService = !serviceValue || services.includes(serviceValue);
 
-                if (matchesSearch && matchesStatus && matchesKontrak) {
+                if (matchesSearch && matchesStatus && matchesService) {
                     item.style.display = 'block';
                 } else {
                     item.style.display = 'none';
@@ -796,12 +927,12 @@ if (file_exists($navbar_path)) {
 
         searchInput.addEventListener('input', filterCustomers);
         statusFilter.addEventListener('change', filterCustomers);
-        kontrakFilter.addEventListener('change', filterCustomers);
+        serviceFilter.addEventListener('change', filterCustomers);
 
         resetFilter.addEventListener('click', function() {
             searchInput.value = '';
             statusFilter.value = '';
-            kontrakFilter.value = '';
+            serviceFilter.value = '';
             filterCustomers();
         });
 
@@ -823,6 +954,7 @@ if (file_exists($navbar_path)) {
             form.addEventListener('submit', function(e) {
                 const namaPerusahaan = document.querySelector('input[name="nama_perusahaan"]');
                 const namaCustomer = document.querySelector('input[name="nama_customer"]');
+                const checkboxes = document.querySelectorAll('input[name="jenis_layanan_ids[]"]:checked');
                 
                 // Validasi required fields
                 if (!namaPerusahaan.value.trim()) {
@@ -836,6 +968,13 @@ if (file_exists($navbar_path)) {
                     e.preventDefault();
                     alert('Nama customer wajib diisi');
                     namaCustomer.focus();
+                    return false;
+                }
+                
+                // Validasi minimal 1 layanan dipilih
+                if (checkboxes.length === 0) {
+                    e.preventDefault();
+                    alert('Pilih minimal satu jenis layanan');
                     return false;
                 }
                 
@@ -856,6 +995,30 @@ if (file_exists($navbar_path)) {
                 }
                 
                 return true;
+            });
+        }
+        
+        // Select all checkboxes functionality
+        const selectAllBtn = document.createElement('button');
+        selectAllBtn.type = 'button';
+        selectAllBtn.className = 'btn btn-sm btn-outline-primary mb-2';
+        selectAllBtn.innerHTML = '<i class="fas fa-check-square me-1"></i> Pilih Semua';
+        
+        const servicesContainer = document.querySelector('.services-container');
+        if (servicesContainer) {
+            servicesContainer.parentNode.insertBefore(selectAllBtn, servicesContainer);
+            
+            selectAllBtn.addEventListener('click', function() {
+                const checkboxes = document.querySelectorAll('input[name="jenis_layanan_ids[]"]');
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                
+                checkboxes.forEach(cb => {
+                    cb.checked = !allChecked;
+                });
+                
+                this.innerHTML = allChecked ? 
+                    '<i class="fas fa-check-square me-1"></i> Pilih Semua' :
+                    '<i class="fas fa-times me-1"></i> Batal Semua';
             });
         }
     });

@@ -831,9 +831,6 @@ require_once 'includes/navbar.php';
                                                             <tr><td><strong>Jam Mulai</strong></td><td><?php echo $jam_mulai; ?></td></tr>
                                                             <tr><td><strong>Jam Selesai</strong></td><td><?php echo $jam_selesai; ?></td></tr>
                                                             <?php if ($rating > 0): ?>
-                                                            <tr><td><strong>Rating Customer</strong></td><td>
-                                                                <div class="rating-stars"><?php echo $stars; ?></div>
-                                                            </td></tr>
                                                             <?php endif; ?>
                                                         </table>
                                                     </div>

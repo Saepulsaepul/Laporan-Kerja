@@ -624,7 +624,7 @@ $debug_info = [
                     </a>
                 </div>
                 
-                <div class="action-card">
+                <!-- <div class="action-card">
                     <div class="action-icon">
                         <i class="fas fa-calendar-alt"></i>
                     </div>
@@ -634,16 +634,16 @@ $debug_info = [
                         <i class="fas fa-list me-2"></i>Lihat Jadwal
                     </a>
                 </div>
-            </div>
+            </div> -->
             
-            <div class="col-lg-8 mb-4">
+            <!-- <div class="col-lg-8 mb-4">
                 <div class="chart-container">
                     <h5 class="fw-bold mb-4"><i class="fas fa-chart-line me-2 text-primary"></i>Statistik Laporan (6 Bulan)</h5>
                     <div style="height: 300px;">
                         <canvas id="monthlyChart"></canvas>
                     </div>
                 </div>
-            </div>
+            </div> -->
         </div>
 
         <!-- Upcoming Schedules -->
@@ -792,13 +792,13 @@ $debug_info = [
                                                     - <?php echo date('H:i', strtotime($jam_selesai)); ?>
                                                 <?php endif; ?>
                                             </span>
-                                        <?php endif; ?>
+                                        <!-- <?php endif; ?>
                                         <?php if ($rating > 0): ?>
                                             <span class="badge bg-warning text-dark">
                                                 <i class="fas fa-star me-1"></i>
                                                 <?php echo $rating; ?>/5
                                             </span>
-                                        <?php endif; ?>
+                                        <?php endif; ?> -->
                                     </div>
                                     <p class="mb-2">
                                         <?php echo substr($description, 0, 150); ?>

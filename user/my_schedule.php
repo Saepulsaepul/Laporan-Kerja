@@ -21,7 +21,7 @@ $page = $_GET['page'] ?? 1;
 $limit = 10;
 $offset = ($page - 1) * $limit;
 
-// Build query
+// Build query dengan parameter binding yang benar
 $where_conditions = ["j.pekerja_id = :pekerja_id"];
 $params = [':pekerja_id' => $user_id];
 
@@ -38,8 +38,9 @@ if (!empty($filter_tanggal)) {
     $params[':bulan'] = $filter_bulan;
 }
 
-$where_clause = "WHERE " . implode(" AND ", $where_conditions);
+$where_clause = !empty($where_conditions) ? "WHERE " . implode(" AND ", $where_conditions) : "";
 
+// Query untuk data
 $query = "
     SELECT 
         j.*, c.nama_customer, c.nama_perusahaan, c.telepon, c.alamat,
@@ -49,35 +50,72 @@ $query = "
     LEFT JOIN customers c ON j.customer_id = c.id
     LEFT JOIN services s ON j.service_id = s.id
     $where_clause
-    ORDER BY j.tanggal DESC, j.jam DESC
+    ORDER BY 
+        CASE j.status
+            WHEN 'Berjalan' THEN 1
+            WHEN 'Menunggu' THEN 2
+            WHEN 'Selesai' THEN 3
+            WHEN 'Dibatalkan' THEN 4
+            ELSE 5
+        END,
+        j.tanggal DESC, j.jam DESC
     LIMIT :limit OFFSET :offset
 ";
-$total_pages = 1;  // nilai default agar tidak undefined
+
+// Query untuk total data (untuk pagination)
+$count_query = "
+    SELECT COUNT(*) as total 
+    FROM jadwal j
+    $where_clause
+";
+
+$total_data = 0;
+$total_pages = 1;
+$schedules = [];
+$error = null;
 
 try {
-$stmt = $pdo->prepare($query);
-
-foreach ($params as $key => $value) {
-    $stmt->bindValue($key, $value);
-}
-
-$stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
-$stmt->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
-
-$stmt->execute();
-$schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    // Debug info
-    if (empty($schedules)) {
-        error_log("No schedules found for user_id: $user_id");
-        // Cek data jadwal
-        $debug_stmt = $pdo->prepare("SELECT COUNT(*) FROM jadwal WHERE pekerja_id = ?");
-        $debug_stmt->execute([$user_id]);
-        $debug_count = $debug_stmt->fetchColumn();
-        error_log("Total jadwal for user $user_id: $debug_count");
+    // Hitung total data
+    $count_stmt = $pdo->prepare($count_query);
+    
+    // Bind parameters untuk count query
+    foreach ($params as $key => $value) {
+        if ($key != ':limit' && $key != ':offset') {
+            $count_stmt->bindValue($key, $value);
+        }
+    }
+    
+    $count_stmt->execute();
+    $count_result = $count_stmt->fetch(PDO::FETCH_ASSOC);
+    $total_data = $count_result['total'] ?? 0;
+    
+    // Hitung total halaman
+    $total_pages = ceil($total_data / $limit);
+    
+    // Jika halaman melebihi total halaman, reset ke halaman terakhir
+    if ($page > $total_pages && $total_pages > 0) {
+        $page = $total_pages;
+        $offset = ($page - 1) * $limit;
+    }
+    
+    // Ambil data jadwal
+    if ($total_data > 0) {
+        $stmt = $pdo->prepare($query);
+        
+        // Bind semua parameter termasuk limit dan offset
+        foreach ($params as $key => $value) {
+            $stmt->bindValue($key, $value);
+        }
+        
+        $stmt->bindValue(':limit', (int)$limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', (int)$offset, PDO::PARAM_INT);
+        
+        $stmt->execute();
+        $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
     
     // Ambil statistik
-    $stats_stmt = $pdo->prepare("
+    $stats_query = "
         SELECT 
             COUNT(*) as total,
             SUM(CASE WHEN status = 'Menunggu' THEN 1 ELSE 0 END) as menunggu,
@@ -86,20 +124,52 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             SUM(CASE WHEN status = 'Dibatalkan' THEN 1 ELSE 0 END) as dibatalkan,
             SUM(CASE WHEN tanggal = CURDATE() THEN 1 ELSE 0 END) as hari_ini
         FROM jadwal 
-        WHERE pekerja_id = ?
-    ");
-    $stats_stmt->execute([$user_id]);
+        WHERE pekerja_id = :pekerja_id
+    ";
+    
+    $stats_params = [':pekerja_id' => $user_id];
+    
+    if (!empty($filter_status)) {
+        $stats_query .= " AND status = :status";
+        $stats_params[':status'] = $filter_status;
+    }
+    
+    if (!empty($filter_tanggal)) {
+        $stats_query .= " AND tanggal = :tanggal";
+        $stats_params[':tanggal'] = $filter_tanggal;
+    } elseif (!empty($filter_bulan)) {
+        $stats_query .= " AND DATE_FORMAT(tanggal, '%Y-%m') = :bulan";
+        $stats_params[':bulan'] = $filter_bulan;
+    }
+    
+    $stats_stmt = $pdo->prepare($stats_query);
+    foreach ($stats_params as $key => $value) {
+        $stats_stmt->bindValue($key, $value);
+    }
+    $stats_stmt->execute();
     $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
     
-    // Jadwal hari ini
-    $today_stmt = $pdo->prepare("
+    // Jadwal hari ini dengan filter yang sama
+    $today_query = "
         SELECT COUNT(*) as total_hari_ini
         FROM jadwal 
-        WHERE pekerja_id = ? 
+        WHERE pekerja_id = :pekerja_id 
         AND tanggal = CURDATE()
         AND status IN ('Menunggu', 'Berjalan')
-    ");
-    $today_stmt->execute([$user_id]);
+    ";
+    
+    $today_params = [':pekerja_id' => $user_id];
+    
+    if (!empty($filter_status)) {
+        $today_query .= " AND status = :status";
+        $today_params[':status'] = $filter_status;
+    }
+    
+    $today_stmt = $pdo->prepare($today_query);
+    foreach ($today_params as $key => $value) {
+        $today_stmt->bindValue($key, $value);
+    }
+    $today_stmt->execute();
     $today_count = $today_stmt->fetchColumn();
     
 } catch (PDOException $e) {
@@ -109,48 +179,6 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
     $today_count = 0;
     $error = "Gagal mengambil data: " . $e->getMessage();
 }
-
-// Fungsi format tanggal
-// function formatTanggalIndonesia($tanggal) {
-//     if (empty($tanggal) || $tanggal == '0000-00-00') return 'Tanggal tidak tersedia';
-    
-//     try {
-//         $hari = array(
-//             'Sunday' => 'Minggu',
-//             'Monday' => 'Senin',
-//             'Tuesday' => 'Selasa',
-//             'Wednesday' => 'Rabu',
-//             'Thursday' => 'Kamis',
-//             'Friday' => 'Jumat',
-//             'Saturday' => 'Sabtu'
-//         );
-        
-//         $bulan = array(
-//             1 => 'Januari',
-//             'Februari',
-//             'Maret',
-//             'April',
-//             'Mei',
-//             'Juni',
-//             'Juli',
-//             'Agustus',
-//             'September',
-//             'Oktober',
-//             'November',
-//             'Desember'
-//         );
-        
-//         $date = new DateTime($tanggal);
-//         $day_name = $date->format('l');
-//         $day = $date->format('d');
-//         $month = $date->format('n');
-//         $year = $date->format('Y');
-        
-//         return $hari[$day_name] . ', ' . $day . ' ' . $bulan[$month] . ' ' . $year;
-//     } catch (Exception $e) {
-//         return date('d/m/Y', strtotime($tanggal));
-//     }
-// }
 ?>
 
 <!DOCTYPE html>
@@ -182,6 +210,10 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             --info-color: #0dcaf0;
             --light-color: #f8f9fa;
             --dark-color: #343a40;
+            --menunggu-color: #ffc107;
+            --berjalan-color: #0dcaf0;
+            --selesai-color: #198754;
+            --dibatalkan-color: #dc3545;
         }
         
         * {
@@ -272,7 +304,6 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
         .stat-icon {
             font-size: 2rem;
-            margin-bottom: 15px;
             width: 60px;
             height: 60px;
             border-radius: 50%;
@@ -283,11 +314,11 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
         }
         
         .stat-icon.total { background: rgba(13, 110, 253, 0.1); color: var(--accent-color); }
-        .stat-icon.menunggu { background: rgba(255, 193, 7, 0.1); color: var(--warning-color); }
-        .stat-icon.berjalan { background: rgba(13, 202, 240, 0.1); color: var(--info-color); }
-        .stat-icon.selesai { background: rgba(25, 135, 84, 0.1); color: var(--primary-color); }
-        .stat-icon.dibatalkan { background: rgba(220, 53, 69, 0.1); color: var(--danger-color); }
         .stat-icon.hari-ini { background: rgba(111, 66, 193, 0.1); color: #6f42c1; }
+        .stat-icon.menunggu { background: rgba(var(--menunggu-rgb), 0.1); color: var(--menunggu-color); }
+        .stat-icon.berjalan { background: rgba(var(--berjalan-rgb), 0.1); color: var(--berjalan-color); }
+        .stat-icon.selesai { background: rgba(var(--selesai-rgb), 0.1); color: var(--selesai-color); }
+        .stat-icon.dibatalkan { background: rgba(var(--dibatalkan-rgb), 0.1); color: var(--dibatalkan-color); }
         
         .stat-value {
             font-size: 1.8rem;
@@ -320,8 +351,18 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             margin-bottom: 20px;
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.05);
             border: 1px solid #e9ecef;
-            border-left: 5px solid var(--warning-color);
             transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .schedule-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 5px;
+            height: 100%;
         }
         
         .schedule-card:hover {
@@ -329,10 +370,10 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
         }
         
-        .schedule-card.menunggu { border-left-color: var(--warning-color); }
-        .schedule-card.berjalan { border-left-color: var(--info-color); }
-        .schedule-card.selesai { border-left-color: var(--primary-color); }
-        .schedule-card.dibatalkan { border-left-color: var(--danger-color); }
+        .schedule-card.menunggu::before { background-color: var(--menunggu-color); }
+        .schedule-card.berjalan::before { background-color: var(--berjalan-color); }
+        .schedule-card.selesai::before { background-color: var(--selesai-color); }
+        .schedule-card.dibatalkan::before { background-color: var(--dibatalkan-color); }
         
         .schedule-header {
             display: flex;
@@ -349,10 +390,10 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             text-transform: uppercase;
         }
         
-        .status-menunggu { background: #fff3cd; color: #856404; }
-        .status-berjalan { background: #d1ecf1; color: #0c5460; }
-        .status-selesai { background: #d4edda; color: #155724; }
-        .status-dibatalkan { background: #f8d7da; color: #721c24; }
+        .status-menunggu { background: var(--menunggu-color); color: white; }
+        .status-berjalan { background: var(--berjalan-color); color: white; }
+        .status-selesai { background: var(--selesai-color); color: white; }
+        .status-dibatalkan { background: var(--dibatalkan-color); color: white; }
         
         .service-badge {
             background: rgba(13, 110, 253, 0.1);
@@ -402,6 +443,26 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             box-shadow: 0 5px 15px rgba(25, 135, 84, 0.3);
         }
         
+        .btn-report:disabled,
+        .btn-report.disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        .btn-view-report {
+            background: var(--info-color);
+            color: white;
+            border: none;
+        }
+        
+        .btn-view-report:hover {
+            background: #0aa2c0;
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(13, 202, 240, 0.3);
+        }
+        
         .btn-detail {
             background: transparent;
             color: var(--accent-color);
@@ -411,6 +472,18 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
         .btn-detail:hover {
             background: var(--accent-color);
             color: white;
+        }
+        
+        .btn-cancel {
+            background: var(--danger-color);
+            color: white;
+            border: none;
+        }
+        
+        .btn-cancel:hover {
+            background: #bb2d3b;
+            color: white;
+            transform: translateY(-2px);
         }
         
         /* Empty State */
@@ -437,6 +510,30 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             background: var(--primary-color);
             border-color: var(--primary-color);
             color: white;
+        }
+        
+        /* Progress Bar */
+        .progress-container {
+            margin: 15px 0;
+        }
+        
+        .progress {
+            height: 10px;
+            border-radius: 5px;
+            background-color: #e9ecef;
+        }
+        
+        .progress-bar {
+            border-radius: 5px;
+            transition: width 0.6s ease;
+        }
+        
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #6c757d;
+            margin-top: 5px;
         }
         
         /* Footer */
@@ -482,14 +579,6 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </style>
 </head>
 <body>
-    <!-- Debug Info -->
-    <div class="debug-info">
-        <strong>Debug Info:</strong><br>
-        User ID: <?php echo $user_id; ?><br>
-        Total Data: <?php echo $total_data ?? 0; ?><br>
-        Schedules: <?php echo count($schedules); ?>
-    </div>
-
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg navbar-custom">
         <div class="container">
@@ -578,16 +667,8 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="stat-label">Menunggu</div>
                 </div>
             </div>
-            <div class="col-md-2 col-sm-4 col-6">
-                <div class="stat-card">
-                    <div class="stat-icon berjalan">
-                        <i class="fas fa-play-circle"></i>
-                    </div>
-                    <div class="stat-value"><?php echo $stats['berjalan'] ?? 0; ?></div>
-                    <div class="stat-label">Berjalan</div>
-                </div>
-            </div>
-            <div class="col-md-2 col-sm-4 col-6">
+            <!--  -->
+            <!-- <div class="col-md-2 col-sm-4 col-6">
                 <div class="stat-card">
                     <div class="stat-icon selesai">
                         <i class="fas fa-check-circle"></i>
@@ -596,16 +677,7 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="stat-label">Selesai</div>
                 </div>
             </div>
-            <div class="col-md-2 col-sm-4 col-6">
-                <div class="stat-card">
-                    <div class="stat-icon dibatalkan">
-                        <i class="fas fa-times-circle"></i>
-                    </div>
-                    <div class="stat-value"><?php echo $stats['dibatalkan'] ?? 0; ?></div>
-                    <div class="stat-label">Dibatalkan</div>
-                </div>
-            </div>
-        </div>
+        </div> -->
 
         <!-- Filter -->
         <div class="filter-card">
@@ -651,7 +723,7 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5 class="fw-bold mb-0">
                         <i class="fas fa-list me-2"></i>Daftar Jadwal 
-                        <span class="badge bg-primary ms-2"><?php echo $total_data ?? 0; ?> Jadwal</span>
+                        <span class="badge bg-primary ms-2"><?php echo $total_data; ?> Jadwal</span>
                     </h5>
                     <div class="d-flex gap-2">
                         <a href="create_report.php" class="btn btn-success">
@@ -678,14 +750,25 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                     </div>
                 <?php else: ?>
                     <?php foreach ($schedules as $schedule): 
-                        $status_class = 'status-' . strtolower($schedule['status']);
-                        $schedule_class = strtolower($schedule['status']);
+                        $status = $schedule['status'];
+                        $status_class = 'status-' . strtolower($status);
+                        $schedule_class = strtolower($status);
                         
                         $customer_name = !empty($schedule['nama_customer']) 
                             ? $schedule['nama_customer'] 
                             : (!empty($schedule['nama_perusahaan']) 
                                 ? $schedule['nama_perusahaan'] 
                                 : 'Pelanggan');
+                        
+                        // Cek apakah sudah ada laporan untuk jadwal ini
+                        $report_exists = false;
+                        try {
+                            $report_stmt = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE jadwal_id = ?");
+                            $report_stmt->execute([$schedule['id']]);
+                            $report_exists = $report_stmt->fetchColumn() > 0;
+                        } catch (Exception $e) {
+                            $report_exists = false;
+                        }
                     ?>
                         <div class="schedule-card <?php echo $schedule_class; ?>">
                             <div class="schedule-header">
@@ -701,7 +784,7 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                         </span>
                                         <span class="status-badge <?php echo $status_class; ?>">
                                             <i class="fas fa-circle me-1" style="font-size: 8px;"></i>
-                                            <?php echo $schedule['status']; ?>
+                                            <?php echo $status; ?>
                                         </span>
                                         <?php if (!empty($schedule['kode_jadwal'])): ?>
                                             <span class="badge bg-light text-dark">
@@ -710,29 +793,46 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                             </span>
                                         <?php endif; ?>
                                         <?php if (!empty($schedule['prioritas'])): ?>
-                                            <span class="badge bg-danger">
+                                            <span class="badge bg-<?php echo $schedule['prioritas'] == 'Darurat' ? 'danger' : 'warning'; ?>">
                                                 <i class="fas fa-exclamation-triangle me-1"></i>
                                                 <?php echo htmlspecialchars($schedule['prioritas']); ?>
+                                            </span>
+                                        <?php endif; ?>
+                                        <?php if ($schedule['jenis_periode'] !== 'Sekali'): ?>
+                                            <span class="badge bg-info">
+                                                <i class="fas fa-redo me-1"></i>
+                                                <?php echo htmlspecialchars($schedule['jenis_periode']); ?>
                                             </span>
                                         <?php endif; ?>
                                     </div>
                                 </div>
                                 <div class="schedule-actions">
-                                    <?php if ($schedule['status'] == 'Selesai'): ?>
-                                        <button class="action-btn btn-success" disabled>
-                                            <i class="fas fa-check me-1"></i>Sudah Dilaporkan
+                                    <?php if ($status == 'Selesai'): ?>
+                                        <?php if ($report_exists): ?>
+                                            <a href="my_reports.php?jadwal_id=<?php echo $schedule['id']; ?>" 
+                                               class="action-btn btn-view-report">
+                                                <i class="fas fa-eye me-1"></i>Lihat Laporan
+                                            </a>
+                                        <?php else: ?>
+                                            <button class="action-btn btn-success disabled">
+                                                <i class="fas fa-check me-1"></i>Selesai
+                                            </button>
+                                        <?php endif; ?>
+                                    <?php elseif ($status == 'Dibatalkan'): ?>
+                                        <button class="action-btn btn-danger disabled">
+                                            <i class="fas fa-ban me-1"></i>Dibatalkan
                                         </button>
-                                    <?php elseif ($schedule['status'] == 'Menunggu' || $schedule['status'] == 'Berjalan'): ?>
+                                    <?php elseif ($status == 'Menunggu' || $status == 'Berjalan'): ?>
                                         <a href="create_report.php?jadwal_id=<?php echo $schedule['id']; ?>" 
                                            class="action-btn btn-report">
                                             <i class="fas fa-file-alt me-1"></i>Buat Laporan
                                         </a>
                                     <?php endif; ?>
-                                    <a href="#" 
-                                       class="action-btn btn-detail" 
-                                       onclick="alert('Fitur detail akan segera tersedia')">
+                                    
+                                    <button class="action-btn btn-detail" 
+                                            onclick="showScheduleDetail(<?php echo htmlspecialchars(json_encode($schedule)); ?>)">
                                         <i class="fas fa-eye me-1"></i>Detail
-                                    </a>
+                                    </button>
                                 </div>
                             </div>
                             
@@ -776,6 +876,21 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                             </small>
                                         </div>
                                     <?php endif; ?>
+                                    
+                                    <!-- Progress untuk jadwal berulang -->
+                                    <?php if ($schedule['jenis_periode'] !== 'Sekali'): ?>
+                                        <div class="progress-container">
+                                            <div class="progress">
+                                                <div class="progress-bar bg-<?php echo $schedule_class; ?>" 
+                                                     style="width: <?php echo min(100, ($schedule['kunjungan_berjalan'] / $schedule['jumlah_kunjungan']) * 100); ?>%">
+                                                </div>
+                                            </div>
+                                            <div class="progress-info">
+                                                <span>Kunjungan <?php echo $schedule['kunjungan_berjalan']; ?> dari <?php echo $schedule['jumlah_kunjungan']; ?></span>
+                                                <span><?php echo round(($schedule['kunjungan_berjalan'] / $schedule['jumlah_kunjungan']) * 100); ?>%</span>
+                                            </div>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="col-md-4">
                                     <div class="bg-light p-3 rounded">
@@ -792,7 +907,7 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                         <div class="text-center">
                                             <small class="text-muted">
                                                 <i class="fas fa-hourglass-half me-1"></i>
-                                                Durasi: <?php echo !empty($schedule['durasi_men']) ? $schedule['durasi_men'] : '0'; ?> menit
+                                                Estimasi: <?php echo !empty($schedule['durasi_estimasi']) ? $schedule['durasi_estimasi'] : ($schedule['durasi_menit'] ?? '0'); ?> menit
                                             </small>
                                         </div>
                                         <?php if (!empty($schedule['harga'])): ?>
@@ -800,6 +915,14 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                                 <small class="fw-bold text-success">
                                                     <i class="fas fa-money-bill-wave me-1"></i>
                                                     Rp <?php echo number_format($schedule['harga'], 0, ',', '.'); ?>
+                                                </small>
+                                            </div>
+                                        <?php endif; ?>
+                                        <?php if (!empty($schedule['created_at'])): ?>
+                                            <div class="text-center mt-2">
+                                                <small class="text-muted">
+                                                    <i class="fas fa-calendar-plus me-1"></i>
+                                                    Dibuat: <?php echo date('d/m/Y', strtotime($schedule['created_at'])); ?>
                                                 </small>
                                             </div>
                                         <?php endif; ?>
@@ -814,21 +937,39 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
                         <nav aria-label="Page navigation" class="mt-4">
                             <ul class="pagination pagination-custom justify-content-center">
                                 <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
-                                    <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page - 1])); ?>">
+                                    <?php
+                                    $prev_params = $_GET;
+                                    $prev_params['page'] = $page - 1;
+                                    ?>
+                                    <a class="page-link" href="?<?php echo http_build_query($prev_params); ?>">
                                         <i class="fas fa-chevron-left"></i>
                                     </a>
                                 </li>
                                 
-                                <?php for ($i = 1; $i <= $total_pages; $i++): ?>
+                                <?php 
+                                $start_page = max(1, $page - 2);
+                                $end_page = min($total_pages, $start_page + 4);
+                                if ($end_page - $start_page < 4) {
+                                    $start_page = max(1, $end_page - 4);
+                                }
+                                
+                                for ($i = $start_page; $i <= $end_page; $i++): 
+                                    $page_params = $_GET;
+                                    $page_params['page'] = $i;
+                                ?>
                                     <li class="page-item <?php echo $page == $i ? 'active' : ''; ?>">
-                                        <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $i])); ?>">
+                                        <a class="page-link" href="?<?php echo http_build_query($page_params); ?>">
                                             <?php echo $i; ?>
                                         </a>
                                     </li>
                                 <?php endfor; ?>
                                 
                                 <li class="page-item <?php echo $page >= $total_pages ? 'disabled' : ''; ?>">
-                                    <a class="page-link" href="?<?php echo http_build_query(array_merge($_GET, ['page' => $page + 1])); ?>">
+                                    <?php
+                                    $next_params = $_GET;
+                                    $next_params['page'] = $page + 1;
+                                    ?>
+                                    <a class="page-link" href="?<?php echo http_build_query($next_params); ?>">
                                         <i class="fas fa-chevron-right"></i>
                                     </a>
                                 </li>
@@ -859,6 +1000,24 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
     </footer>
+
+    <!-- Modal for Schedule Details -->
+    <div class="modal fade" id="scheduleDetailModal" tabindex="-1" aria-labelledby="scheduleDetailModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="scheduleDetailModalLabel">Detail Jadwal</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="scheduleDetailContent">
+                    <!-- Content will be loaded here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -901,6 +1060,115 @@ $schedules = $stmt->fetchAll(PDO::FETCH_ASSOC);
             });
         }
     });
+    
+    function showScheduleDetail(schedule) {
+        const statusColors = {
+            'Menunggu': '#ffc107',
+            'Berjalan': '#0dcaf0', 
+            'Selesai': '#198754',
+            'Dibatalkan': '#dc3545'
+        };
+        
+        const statusClass = {
+            'Menunggu': 'warning',
+            'Berjalan': 'info',
+            'Selesai': 'success',
+            'Dibatalkan': 'danger'
+        };
+        
+        const content = `
+            <div class="row">
+                <div class="col-md-6">
+                    <h6 class="fw-bold mb-2">Informasi Customer</h6>
+                    <table class="table table-sm">
+                        <tr>
+                            <td width="40%"><small>Nama</small></td>
+                            <td><strong>${schedule.nama_customer || schedule.nama_perusahaan || 'Pelanggan'}</strong></td>
+                        </tr>
+                        <tr>
+                            <td><small>Perusahaan</small></td>
+                            <td>${schedule.nama_perusahaan || '-'}</td>
+                        </tr>
+                        <tr>
+                            <td><small>Telepon</small></td>
+                            <td>${schedule.telepon || '-'}</td>
+                        </tr>
+                        <tr>
+                            <td><small>Alamat</small></td>
+                            <td>${schedule.alamat || '-'}</td>
+                        </tr>
+                        ${schedule.customer_keterangan ? `
+                        <tr>
+                            <td><small>Keterangan</small></td>
+                            <td>${schedule.customer_keterangan}</td>
+                        </tr>` : ''}
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <h6 class="fw-bold mb-2">Informasi Jadwal</h6>
+                    <table class="table table-sm">
+                        <tr>
+                            <td width="40%"><small>Status</small></td>
+                            <td>
+                                <span class="badge bg-${statusClass[schedule.status] || 'secondary'}">
+                                    ${schedule.status}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><small>Tanggal & Jam</small></td>
+                            <td>
+                                ${new Date(schedule.tanggal).toLocaleDateString('id-ID', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                                <br><small>${schedule.jam ? schedule.jam.substring(0,5) : '-'}</small>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><small>Lokasi Detail</small></td>
+                            <td>${schedule.lokasi || '-'}</td>
+                        </tr>
+                        <tr>
+                            <td><small>Prioritas</small></td>
+                            <td>${schedule.prioritas || 'Sedang'}</td>
+                        </tr>
+                        <tr>
+                            <td><small>Estimasi Durasi</small></td>
+                            <td>${schedule.durasi_estimasi || schedule.durasi_menit || 0} menit</td>
+                        </tr>
+                        ${schedule.jenis_periode !== 'Sekali' ? `
+                        <tr>
+                            <td><small>Jenis Periode</small></td>
+                            <td>${schedule.jenis_periode} (${schedule.kunjungan_berjalan}/${schedule.jumlah_kunjungan} kunjungan)</td>
+                        </tr>` : ''}
+                    </table>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-12">
+                    <h6 class="fw-bold mb-2">Layanan</h6>
+                    <div class="card">
+                        <div class="card-body">
+                            <h6>${schedule.nama_service || 'Layanan'}</h6>
+                            <p class="mb-2">${schedule.deskripsi_service || 'Tidak ada deskripsi'}</p>
+                            ${schedule.harga ? `<p class="mb-0"><strong>Harga:</strong> Rp ${Number(schedule.harga).toLocaleString('id-ID')}</p>` : ''}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            ${schedule.catatan_admin ? `
+            <div class="row mt-3">
+                <div class="col-12">
+                    <h6 class="fw-bold mb-2">Catatan Admin</h6>
+                    <div class="alert alert-info">
+                        ${schedule.catatan_admin}
+                    </div>
+                </div>
+            </div>` : ''}
+        `;
+        
+        document.getElementById('scheduleDetailContent').innerHTML = content;
+        const modal = new bootstrap.Modal(document.getElementById('scheduleDetailModal'));
+        modal.show();
+    }
     </script>
 </body>
 </html>

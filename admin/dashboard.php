@@ -346,8 +346,8 @@ require_once 'includes/header.php';
                             <div class="d-flex justify-content-between align-items-start">
                                 <div>
                                     <p class="text-muted mb-1">Total Layanan</p>
-                                    <div class="stat-value text-warning"><?= number_format($totalServices); ?></div>
-                                    <small class="text-muted">Tersedia</small>
+                                    <div class="stat-value text-warning"><?= number_format($totalReports); ?></div>
+                                    <small class="text-muted">Sudah di kerjakan</small>
                                 </div>
                                 <i class="fas fa-concierge-bell stat-card-icon text-warning"></i>
                             </div>
