@@ -754,8 +754,8 @@ try {
                         $status_class = 'status-' . strtolower($status);
                         $schedule_class = strtolower($status);
                         
-                        $customer_name = !empty($schedule['nama_customer']) 
-                            ? $schedule['nama_customer'] 
+                        $customer_name = !empty($schedule['nama_pelanggan']) 
+                            ? $schedule['nama_pelanggan'] 
                             : (!empty($schedule['nama_perusahaan']) 
                                 ? $schedule['nama_perusahaan'] 
                                 : 'Pelanggan');

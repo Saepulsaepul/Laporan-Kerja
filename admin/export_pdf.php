@@ -480,12 +480,12 @@ require_once 'includes/navbar.php';
                                 <span class="export-type-badge badge-pdf ms-auto">PDF</span>
                             </a>
                             
-                            <a href="generate_pdf.php?action=pdf&report_type=with_photo" 
+                            <!-- <a href="generate_pdf.php?action=pdf&report_type=with_photo" 
                                class="list-group-item list-group-item-action" target="_blank">
                                 <span class="icon"><i class="fas fa-camera text-success"></i></span>
                                 Semua Laporan dengan Foto
                                 <span class="export-type-badge badge-pdf ms-auto">PDF</span>
-                            </a>
+                            </a> -->
                         </div>
                     </div>
                     

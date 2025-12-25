@@ -428,9 +428,9 @@ require_once 'includes/header.php';
                             <?php else: ?>
                                 <?php foreach ($upcomingSchedules as $schedule): 
                                     $statusClass = 'status-' . strtolower($schedule['status']);
-                                    $customer_name = !empty($schedule['nama_customer']) 
-                                        ? $schedule['nama_customer'] 
-                                        : $schedule['nama_perusahaan'];
+                                    $customer_name = !empty($schedule['nama_perusahaan']) 
+                                        ? $schedule['nama_perusahaan'] 
+                                        : $schedule['nama_customer'];
                                 ?>
                                     <div class="activity-item">
                                         <div class="activity-avatar bg-primary text-white">
@@ -494,9 +494,9 @@ require_once 'includes/header.php';
                                 </div>
                             <?php else: ?>
                                 <?php foreach ($recentReports as $report): 
-                                    $customer_name = !empty($report['nama_customer']) 
-                                        ? $report['nama_customer'] 
-                                        : $report['nama_perusahaan'];
+                                    $customer_name = !empty($report['nama_perusahaan']) 
+                                        ? $report['nama_perusahaan'] 
+                                        : $report['nama_customer'];
                                     
                                     $jam_info = '';
                                     if (!empty($report['jam_mulai'])) {

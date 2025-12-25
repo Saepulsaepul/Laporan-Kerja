@@ -74,7 +74,6 @@ $sql = "SELECT
         s.id as service_id,
         s.nama_service, 
         s.kode_service, 
-        s.harga as service_harga, 
         s.deskripsi as service_deskripsi,
         
         a.nama as admin_nama
@@ -163,7 +162,6 @@ foreach ($reports as $report) {
         $reportsByService[$serviceId] = [
             'service_name' => $serviceName,
             'kode_service' => $report['kode_service'] ?? '-',
-            'service_harga' => (float)($report['service_harga'] ?? 0),
             'reports' => []
         ];
     }
@@ -172,16 +170,12 @@ foreach ($reports as $report) {
 
 // Hitung statistik
 $total_reports = count($reports);
-$total_revenue = 0;
 $report_counts = [
     'with_photo' => 0,
     'high_priority' => 0
 ];
 
 foreach ($reports as $report) {
-    $service_price = (float)($report['service_harga'] ?? 0);
-    $total_revenue += $service_price;
-    
     // Hitung laporan dengan foto
     if (!empty($report['foto_bukti']) || !empty($report['foto_sebelum']) || !empty($report['foto_sesudah'])) {
         $report_counts['with_photo']++;
@@ -307,13 +301,12 @@ if ($action === 'excel') {
     
     echo '<table>';
     echo '<tr>';
-    echo '<th colspan="14" style="background-color: #198754; color: white; font-size: 18px; padding: 15px; text-align: center;">LAPORAN PEST CONTROL - PT. REXON MITRA PRIMA</th>';
+    echo '<th colspan="12" style="background-color: #198754; color: white; font-size: 18px; padding: 15px; text-align: center;">LAPORAN PEST CONTROL - PT. REXON MITRA PRIMA</th>';
     echo '</tr>';
     echo '<tr>';
-    echo '<td colspan="14" style="text-align: center; padding: 10px; background-color: #f8f9fa;">';
+    echo '<td colspan="12" style="text-align: center; padding: 10px; background-color: #f8f9fa;">';
     echo '<strong>Periode:</strong> ' . ($start_date ? formatTanggalIndonesia($start_date) : 'Awal') . ' s/d ' . ($end_date ? formatTanggalIndonesia($end_date) : 'Akhir') . ' | ';
-    echo '<strong>Total Laporan:</strong> ' . $total_reports . ' | ';
-    echo '<strong>Total Pendapatan:</strong> Rp ' . number_format($total_revenue, 0, ',', '.');
+    echo '<strong>Total Laporan:</strong> ' . $total_reports;
     if ($report_counts['with_photo'] > 0) {
         echo ' | <strong>Dengan Foto:</strong> ' . $report_counts['with_photo'];
     }
@@ -326,14 +319,11 @@ if ($action === 'excel') {
     if (!empty($reportsByService)) {
         foreach ($reportsByService as $serviceId => $serviceData) {
             $service_total = count($serviceData['reports']);
-            $service_revenue = $serviceData['service_harga'] * $service_total;
             
             echo '<tr class="service-header">';
-            echo '<td colspan="14" style="background-color: #e7f5ff; padding: 10px;">';
+            echo '<td colspan="12" style="background-color: #e7f5ff; padding: 10px;">';
             echo '<strong>LAYANAN:</strong> ' . htmlspecialchars($serviceData['service_name']) . ' (' . htmlspecialchars($serviceData['kode_service']) . ') | ';
-            echo '<strong>Jumlah:</strong> ' . $service_total . ' pekerjaan | ';
-            echo '<strong>Harga Satuan:</strong> Rp ' . number_format($serviceData['service_harga'], 0, ',', '.') . ' | ';
-            echo '<strong>Total Pendapatan:</strong> Rp ' . number_format($service_revenue, 0, ',', '.');
+            echo '<strong>Jumlah Pekerjaan:</strong> ' . $service_total;
             echo '</td>';
             echo '</tr>';
             
@@ -350,9 +340,7 @@ if ($action === 'excel') {
             echo '<th>Prioritas</th>';
             echo '<th>Status</th>';
             echo '<th>Keterangan</th>';
-            echo '<th>Foto Bukti</th>';
-            echo '<th>Foto Sebelum</th>';
-            echo '<th>Foto Sesudah</th>';
+            echo '<th>Dokumentasi</th>';
             echo '</tr>';
             
             $no = 1;
@@ -360,6 +348,18 @@ if ($action === 'excel') {
                 $keterangan = htmlspecialchars($report['keterangan'] ?? '');
                 if (strlen($keterangan) > 80) {
                     $keterangan = substr($keterangan, 0, 80) . '...';
+                }
+                
+                $dokumentasi = '';
+                $photo_count = 0;
+                if (!empty($report['foto_bukti'])) $photo_count++;
+                if (!empty($report['foto_sebelum'])) $photo_count++;
+                if (!empty($report['foto_sesudah'])) $photo_count++;
+                
+                if ($photo_count > 0) {
+                    $dokumentasi = '<span class="photo-icon">✓ ' . $photo_count . ' foto</span>';
+                } else {
+                    $dokumentasi = '-';
                 }
                 
                 echo '<tr>';
@@ -374,57 +374,27 @@ if ($action === 'excel') {
                 echo '<td class="text-center">' . htmlspecialchars($report['prioritas'] ?? 'N/A') . '</td>';
                 echo '<td class="text-center">' . htmlspecialchars($report['jadwal_status'] ?? 'N/A') . '</td>';
                 echo '<td class="small">' . $keterangan . '</td>';
-                
-                // Kolom Foto Bukti
-                echo '<td class="photo-cell">';
-                if (!empty($report['foto_bukti'])) {
-                    $photo_path = '../assets/uploads/' . $report['foto_bukti'];
-                    echo '<span class="photo-icon">✓ Ada</span>';
-                } else {
-                    echo '-';
-                }
-                echo '</td>';
-                
-                // Kolom Foto Sebelum
-                echo '<td class="photo-cell">';
-                if (!empty($report['foto_sebelum'])) {
-                    $photo_path = '../assets/uploads/' . $report['foto_sebelum'];
-                    echo '<span class="photo-icon">✓ Ada</span>';
-                } else {
-                    echo '-';
-                }
-                echo '</td>';
-                
-                // Kolom Foto Sesudah
-                echo '<td class="photo-cell">';
-                if (!empty($report['foto_sesudah'])) {
-                    $photo_path = '../assets/uploads/' . $report['foto_sesudah'];
-                    echo '<span class="photo-icon">✓ Ada</span>';
-                } else {
-                    echo '-';
-                }
-                echo '</td>';
-                
+                echo '<td class="photo-cell text-center">' . $dokumentasi . '</td>';
                 echo '</tr>';
             }
             
             echo '<tr class="total-row">';
-            echo '<td colspan="11" style="text-align: right; background-color: #f8f9fa; padding: 10px;"><strong>Subtotal Layanan ' . htmlspecialchars($serviceData['service_name']) . ':</strong></td>';
-            echo '<td colspan="3" style="background-color: #f8f9fa; font-weight: bold; padding: 10px;">Rp ' . number_format($service_revenue, 0, ',', '.') . '</td>';
+            echo '<td colspan="11" style="text-align: right; background-color: #f8f9fa; padding: 10px;"><strong>Total Layanan ' . htmlspecialchars($serviceData['service_name']) . ':</strong></td>';
+            echo '<td style="background-color: #f8f9fa; font-weight: bold; padding: 10px;">' . $service_total . ' pekerjaan</td>';
             echo '</tr>';
             
             // Tambah baris kosong antar layanan
-            echo '<tr><td colspan="14" style="height: 5px; background-color: #fff;"></td></tr>';
+            echo '<tr><td colspan="12" style="height: 5px; background-color: #fff;"></td></tr>';
         }
         
         // Total keseluruhan
         echo '<tr class="total-row">';
-        echo '<td colspan="11" style="text-align: right; background-color: #198754; color: white; padding: 12px;"><strong>TOTAL KESELURUHAN:</strong></td>';
-        echo '<td colspan="3" style="background-color: #198754; color: white; font-weight: bold; padding: 12px;">Rp ' . number_format($total_revenue, 0, ',', '.') . '</td>';
+        echo '<td colspan="11" style="text-align: right; background-color: #198754; color: white; padding: 12px;"><strong>TOTAL LAPORAN:</strong></td>';
+        echo '<td style="background-color: #198754; color: white; font-weight: bold; padding: 12px;">' . $total_reports . ' laporan</td>';
         echo '</tr>';
         
     } else {
-        echo '<tr><td colspan="14" style="text-align: center; padding: 40px; color: #666; font-style: italic;">Tidak ada data laporan yang sesuai dengan filter yang dipilih.</td></tr>';
+        echo '<tr><td colspan="12" style="text-align: center; padding: 40px; color: #666; font-style: italic;">Tidak ada data laporan yang sesuai dengan filter yang dipilih.</td></tr>';
     }
     
     echo '</table>';
@@ -491,21 +461,21 @@ $pdf->Ln(8);
 // -----------------------------------------------------------------
 $pdf->SetFont('helvetica', 'BU', 12);
 if ($show_photos) {
-    $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL DENGAN FOTO', 0, 1, 'C');
+    $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL - DENGAN DOKUMENTASI', 0, 1, 'C');
 } else {
-    $pdf->Cell(0, 8, 'LAPORAN PEKERJAAN PEST CONTROL', 0, 1, 'C');
+    $pdf->Cell(0, 8, 'LAPORAN MONITORING PEKERJAAN PEST CONTROL', 0, 1, 'C');
 }
 $pdf->SetFont('helvetica', '', 9);
 
 $filterInfo = "Periode: " . ($start_date ? formatTanggalIndonesia($start_date) : 'Awal') . " s/d " . ($end_date ? formatTanggalIndonesia($end_date) : 'Akhir');
 $pdf->Cell(0, 5, $filterInfo, 0, 1, 'C');
 
-$summaryInfo = "Total Laporan: $total_reports | Total Pendapatan: Rp " . number_format($total_revenue, 0, ',', '.');
+$summaryInfo = "Total Laporan: $total_reports pekerjaan";
 $pdf->Cell(0, 5, $summaryInfo, 0, 1, 'C');
 
 $additionalInfo = "";
 if ($report_counts['with_photo'] > 0) {
-    $additionalInfo .= "Laporan dengan Foto: " . $report_counts['with_photo'] . " | ";
+    $additionalInfo .= "Dengan Dokumentasi Foto: " . $report_counts['with_photo'] . " | ";
 }
 if ($report_counts['high_priority'] > 0) {
     $additionalInfo .= "Prioritas Tinggi: " . $report_counts['high_priority'];
@@ -520,15 +490,12 @@ $pdf->Ln(5);
 // --- BAGIAN LAPORAN DENGAN FOTO (A4 PORTRAIT) ---
 // ===================================================================
 if (!empty($reportsByService)) {
-    $total_pendapatan = 0;
     $total_laporan = 0;
     $service_count = count($reportsByService);
     
     foreach ($reportsByService as $serviceId => $serviceData) {
         $total_layanan = count($serviceData['reports']);
         $total_laporan += $total_layanan;
-        $pendapatan_layanan = $serviceData['service_harga'] * $total_layanan;
-        $total_pendapatan += $pendapatan_layanan;
         
         // Header Layanan
         $pdf->SetFont('helvetica', 'B', 11);
@@ -536,7 +503,7 @@ if (!empty($reportsByService)) {
         $pdf->Cell(0, 8, 'LAYANAN: ' . $serviceData['service_name'] . ' (' . $serviceData['kode_service'] . ')', 0, 1, 'L', true);
         
         $pdf->SetFont('helvetica', '', 8);
-        $pdf->Cell(0, 5, 'Jumlah Pekerjaan: ' . $total_layanan . ' | Harga per Layanan: Rp ' . number_format($serviceData['service_harga'], 0, ',', '.') . ' | Total Pendapatan: Rp ' . number_format($pendapatan_layanan, 0, ',', '.'), 0, 1, 'L');
+        $pdf->Cell(0, 5, 'Jumlah Pekerjaan: ' . $total_layanan, 0, 1, 'L');
         $pdf->Ln(3);
         
         if ($show_photos) {
@@ -581,10 +548,49 @@ if (!empty($reportsByService)) {
                 
                 $pdf->Ln(5);
                 
-                // Deskripsi/Keterangan
+                // Bahan yang Digunakan
+                if (!empty($report['bahan_digunakan'])) {
+                    $pdf->SetFont('helvetica', 'B', 8);
+                    $pdf->Cell(0, 5, 'Bahan yang Digunakan:', 0, 1, 'L');
+                    $pdf->SetFont('helvetica', '', 7);
+                    $bahan = $report['bahan_digunakan'];
+                    if (strlen($bahan) > 300) {
+                        $bahan = substr($bahan, 0, 300) . '...';
+                    }
+                    $pdf->MultiCell(0, 4, $bahan, 0, 'L');
+                    $pdf->Ln(2);
+                }
+                
+                // Hasil Pengamatan
+                if (!empty($report['hasil_pengamatan'])) {
+                    $pdf->SetFont('helvetica', 'B', 8);
+                    $pdf->Cell(0, 5, 'Hasil Pengamatan:', 0, 1, 'L');
+                    $pdf->SetFont('helvetica', '', 7);
+                    $hasil = $report['hasil_pengamatan'];
+                    if (strlen($hasil) > 300) {
+                        $hasil = substr($hasil, 0, 300) . '...';
+                    }
+                    $pdf->MultiCell(0, 4, $hasil, 0, 'L');
+                    $pdf->Ln(2);
+                }
+                
+                // Rekomendasi
+                if (!empty($report['rekomendasi'])) {
+                    $pdf->SetFont('helvetica', 'B', 8);
+                    $pdf->Cell(0, 5, 'Rekomendasi:', 0, 1, 'L');
+                    $pdf->SetFont('helvetica', '', 7);
+                    $rekomendasi = $report['rekomendasi'];
+                    if (strlen($rekomendasi) > 300) {
+                        $rekomendasi = substr($rekomendasi, 0, 300) . '...';
+                    }
+                    $pdf->MultiCell(0, 4, $rekomendasi, 0, 'L');
+                    $pdf->Ln(2);
+                }
+                
+                // Keterangan
                 if (!empty($report['keterangan'])) {
                     $pdf->SetFont('helvetica', 'B', 8);
-                    $pdf->Cell(0, 5, 'Keterangan Pekerjaan:', 0, 1, 'L');
+                    $pdf->Cell(0, 5, 'Keterangan Tambahan:', 0, 1, 'L');
                     $pdf->SetFont('helvetica', '', 7);
                     $keterangan = $report['keterangan'];
                     if (strlen($keterangan) > 300) {
@@ -605,7 +611,7 @@ if (!empty($reportsByService)) {
                 if (!empty($report['foto_sebelum'])) {
                     $hasPhotos = true;
                     $photoPath = '../assets/uploads/' . $report['foto_sebelum'];
-                    addPhotoToPDF($pdf, $photoPath, "Foto Sebelum", $photoX, $photoY);
+                    addPhotoToPDF($pdf, $photoPath, "Foto Sebelum Pekerjaan", $photoX, $photoY);
                     $photoX += 55; // Geser untuk foto berikutnya
                 }
                 
@@ -613,7 +619,7 @@ if (!empty($reportsByService)) {
                 if (!empty($report['foto_sesudah'])) {
                     $hasPhotos = true;
                     $photoPath = '../assets/uploads/' . $report['foto_sesudah'];
-                    addPhotoToPDF($pdf, $photoPath, "Foto Sesudah", $photoX, $photoY);
+                    addPhotoToPDF($pdf, $photoPath, "Foto Sesudah Pekerjaan", $photoX, $photoY);
                     $photoX += 55; // Geser untuk foto berikutnya
                 }
                 
@@ -627,7 +633,7 @@ if (!empty($reportsByService)) {
                         $photoY = $pdf->GetY();
                         $photoX = 20;
                     }
-                    addPhotoToPDF($pdf, $photoPath, "Foto Bukti", $photoX, $photoY);
+                    addPhotoToPDF($pdf, $photoPath, "Foto Bukti Pekerjaan", $photoX, $photoY);
                 }
                 
                 if ($hasPhotos) {
@@ -636,8 +642,15 @@ if (!empty($reportsByService)) {
                     // Jika tidak ada foto, beri keterangan
                     $pdf->SetFont('helvetica', 'I', 8);
                     $pdf->SetTextColor(150, 150, 150);
-                    $pdf->Cell(0, 5, '* Tidak ada foto dokumentasi untuk laporan ini', 0, 1, 'C');
+                    $pdf->Cell(0, 5, '* Tidak ada dokumentasi foto untuk laporan ini', 0, 1, 'C');
                     $pdf->SetTextColor(0, 0, 0);
+                    $pdf->Ln(2);
+                }
+                
+                // Rating Customer (jika ada)
+                if (!empty($report['rating_customer']) && $report['rating_customer'] > 0) {
+                    $pdf->SetFont('helvetica', 'B', 8);
+                    $pdf->Cell(0, 5, 'Rating dari Customer: ' . str_repeat('★', $report['rating_customer']), 0, 1, 'L');
                     $pdf->Ln(2);
                 }
                 
@@ -653,8 +666,8 @@ if (!empty($reportsByService)) {
         } else {
             // Mode tanpa foto - tampilkan tabel ringkas untuk A4
             // Header Tabel
-            $header = ['No', 'Kode', 'Tanggal', 'Perusahaan', 'Pekerja', 'Lokasi', 'Prioritas'];
-            $widths = [8, 20, 25, 40, 30, 40, 15];
+            $header = ['No', 'Kode', 'Tanggal', 'Perusahaan', 'Customer', 'Pekerja', 'Lokasi', 'Prioritas', 'Status'];
+            $widths = [8, 20, 25, 35, 30, 25, 35, 15, 15];
             
             $pdf->SetFillColor(240, 240, 240);
             $pdf->SetTextColor(0);
@@ -691,9 +704,6 @@ if (!empty($reportsByService)) {
                 }
                 
                 // Row data
-                $currentX = $pdf->GetX();
-                $currentY = $pdf->GetY();
-                
                 // No
                 $pdf->MultiCell($widths[0], $rowHeight, $no++, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
@@ -710,24 +720,31 @@ if (!empty($reportsByService)) {
                 
                 // Perusahaan
                 $perusahaan = $report['nama_perusahaan'] ?? 'Tidak ada data';
-                if (strlen($perusahaan) > 25) {
-                    $perusahaan = substr($perusahaan, 0, 25) . '...';
+                if (strlen($perusahaan) > 20) {
+                    $perusahaan = substr($perusahaan, 0, 20) . '...';
                 }
                 $pdf->MultiCell($widths[3], $rowHeight, $perusahaan, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
+                // Customer
+                $customer = $report['nama_customer'] ?? 'Tidak ada data';
+                if (strlen($customer) > 15) {
+                    $customer = substr($customer, 0, 15) . '...';
+                }
+                $pdf->MultiCell($widths[4], $rowHeight, $customer, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                
                 // Pekerja
                 $pekerja = $report['pekerja_nama'] ?? 'N/A';
-                if (strlen($pekerja) > 15) {
-                    $pekerja = substr($pekerja, 0, 15) . '...';
+                if (strlen($pekerja) > 12) {
+                    $pekerja = substr($pekerja, 0, 12) . '...';
                 }
-                $pdf->MultiCell($widths[4], $rowHeight, $pekerja, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $pdf->MultiCell($widths[5], $rowHeight, $pekerja, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Lokasi
                 $lokasi = $report['jadwal_lokasi'] ?? 'N/A';
-                if (strlen($lokasi) > 25) {
-                    $lokasi = substr($lokasi, 0, 25) . '...';
+                if (strlen($lokasi) > 20) {
+                    $lokasi = substr($lokasi, 0, 20) . '...';
                 }
-                $pdf->MultiCell($widths[5], $rowHeight, $lokasi, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $pdf->MultiCell($widths[6], $rowHeight, $lokasi, 'LTRB', 'L', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Prioritas
                 $prioritas = $report['prioritas'] ?? 'N/A';
@@ -758,7 +775,30 @@ if (!empty($reportsByService)) {
                 
                 $pdf->SetFillColorArray($fillColor);
                 $pdf->SetTextColor($textColor);
-                $pdf->MultiCell($widths[6], $rowHeight, $prioritas, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $pdf->MultiCell($widths[7], $rowHeight, $prioritas, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
+                $pdf->SetTextColor(0);
+                
+                // Status
+                $status = $report['jadwal_status'] ?? 'N/A';
+                $statusColor = 255;
+                switch(strtolower($status)) {
+                    case 'selesai':
+                    case 'completed':
+                        $statusColor = array(200, 255, 200); // hijau muda
+                        break;
+                    case 'proses':
+                    case 'in_progress':
+                        $statusColor = array(255, 255, 200); // kuning muda
+                        break;
+                    case 'pending':
+                        $statusColor = array(255, 235, 200); // orange muda
+                        break;
+                    default:
+                        $statusColor = 255;
+                }
+                
+                $pdf->SetFillColorArray($statusColor);
+                $pdf->MultiCell($widths[8], $rowHeight, $status, 'LTRB', 'C', true, 0, '', '', true, 0, false, true, $rowHeight, 'M');
                 
                 // Reset warna untuk row berikutnya
                 $pdf->SetFillColor(255);
@@ -773,25 +813,19 @@ if (!empty($reportsByService)) {
         // Total per layanan
         $pdf->SetFont('helvetica', 'B', 9);
         $pdf->SetFillColor(245, 245, 245);
-        $pdf->Cell(0, 8, 'Total Layanan ' . $serviceData['service_name'] . ': ' . $total_layanan . ' pekerjaan | Total Pendapatan: Rp ' . number_format($pendapatan_layanan, 0, ',', '.'), 0, 1, 'R', true);
+        $pdf->Cell(0, 8, 'Total Layanan ' . $serviceData['service_name'] . ': ' . $total_layanan . ' pekerjaan', 0, 1, 'R', true);
         $pdf->Ln(3);
     }
     
     // Ringkasan Total
     $pdf->SetFont('helvetica', 'B', 12);
     $pdf->SetFillColor(200, 220, 255); // Biru muda
-    $pdf->Cell(0, 10, 'RINGKASAN TOTAL', 0, 1, 'C', true);
+    $pdf->Cell(0, 10, 'RINGKASAN AKHIR', 0, 1, 'C', true);
     $pdf->SetFont('helvetica', '', 10);
     
-    $summary = "Total Laporan: " . $total_laporan . " laporan\n" .
-               "Total Layanan Berbeda: " . $service_count . " jenis layanan\n" .
-               "Total Pendapatan: Rp " . number_format($total_pendapatan, 0, ',', '.') . "\n";
-    
-    if ($show_photos) {
-        $summary .= "Laporan dengan Foto: " . $report_counts['with_photo'] . "\n";
-    }
-    
-    $summary .= "Rata-rata per Laporan: Rp " . ($total_laporan > 0 ? number_format($total_pendapatan / $total_laporan, 0, ',', '.') : '0');
+    $summary = "Total Laporan: " . $total_laporan . " pekerjaan\n" .
+               "Jenis Layanan: " . $service_count . " jenis layanan berbeda\n" .
+               "Laporan Prioritas Tinggi: " . $report_counts['high_priority'] . " pekerjaan";
     
     $pdf->MultiCell(0, 8, $summary, 0, 'C', false);
     $pdf->Ln(10);
@@ -832,9 +866,9 @@ $pdf->Cell(0, 10, 'Dokumen ini dihasilkan secara otomatis oleh Sistem Pest Contr
 // -----------------------------------------------------------------
 try {
     if ($show_photos) {
-        $filename = 'Laporan_Pest_Control_Foto_' . date('Ymd_His') . '.pdf';
+        $filename = 'Laporan_Pest_Control_Dokumentasi_' . date('Ymd_His') . '.pdf';
     } else {
-        $filename = 'Laporan_Pest_Control_' . date('Ymd_His') . '.pdf';
+        $filename = 'Laporan_Monitoring_Pest_Control_' . date('Ymd_His') . '.pdf';
     }
     $pdf->Output($filename, 'I'); // 'I' untuk tampil di browser, 'D' untuk download
 } catch (Exception $e) {

@@ -99,7 +99,7 @@ try {
             <div class="col-md-6">
                 <div class="modal-label">Customer</div>
                 <div class="modal-value">
-                    <strong><?php echo htmlspecialchars($report['nama_customer'] ?: $report['nama_perusahaan']); ?></strong>
+                    <strong><?php echo htmlspecialchars($report['nama_perusahaan'] ?: $report['nama_customer']); ?></strong>
                     <?php if (!empty($report['customer_telepon'])): ?>
                         <br><small class="text-muted">Telp: <?php echo htmlspecialchars($report['customer_telepon']); ?></small>
                     <?php endif; ?>
@@ -189,25 +189,7 @@ try {
     </div>
     <?php endif; ?>
     
-    <!-- <?php if ($report['rating_customer']): ?>
-    <div class="modal-section">
-        <div class="modal-label">Rating Customer</div>
-        <div class="modal-value">
-            <?php 
-            for ($i = 1; $i <= 5; $i++): 
-                if ($i <= $report['rating_customer']):
-            ?>
-                <i class="fas fa-star text-warning"></i>
-            <?php else: ?>
-                <i class="far fa-star text-muted"></i>
-            <?php 
-                endif;
-            endfor; 
-            ?>
-            <span class="ms-2">(<?php echo $report['rating_customer']; ?>/5)</span>
-        </div>
-    </div>
-    <?php endif; ?> -->
+    <!--  -->
     
     <?php if (!empty($report['foto_sebelum']) || !empty($report['foto_bukti']) || !empty($report['foto_sesudah'])): ?>
     <div class="modal-section">

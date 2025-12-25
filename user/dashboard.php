@@ -664,7 +664,7 @@ $debug_info = [
                     <?php foreach ($upcoming_schedules as $schedule): 
                         $status = $schedule['status'] ?? 'Menunggu';
                         $status_class = 'status-' . strtolower($status);
-                        $customer_name = safe_display($schedule['nama_customer'] ?? $schedule['nama_perusahaan'], 'Pelanggan');
+                        $customer_name = safe_display($schedule['nama_perusahaan'] ?? $schedule['nama_perusahaan'], 'Pelanggan');
                         $service_name = safe_display($schedule['nama_service'], 'Layanan');
                         $schedule_date = safe_display($schedule['tanggal']);
                         $schedule_time = safe_display($schedule['jam']);
@@ -756,7 +756,7 @@ $debug_info = [
                     </div>
                 <?php else: ?>
                     <?php foreach ($recent_reports as $report): 
-                        $customer_name = safe_display($report['nama_customer'] ?? $report['nama_perusahaan'], 'Customer');
+                        $customer_name = safe_display($report['nama_perusahaan'] ?? $report['nama_perusahaan'], 'Customer');
                         $service_name = safe_display($report['nama_service'], 'Layanan');
                         $kode_laporan = safe_display($report['kode_laporan']);
                         $report_date = safe_display($report['tanggal_pelaporan'] ?? $report['created_at']);

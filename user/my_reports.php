@@ -157,19 +157,6 @@ try {
 }
 
 
-// Fungsi untuk menampilkan rating stars
-function displayRating($rating) {
-    $html = '';
-    $rating = (int)$rating;
-    for ($i = 1; $i <= 5; $i++) {
-        if ($i <= $rating) {
-            $html .= '<i class="fas fa-star text-warning"></i>';
-        } else {
-            $html .= '<i class="far fa-star text-muted"></i>';
-        }
-    }
-    return $html;
-}
 
 // Fungsi untuk badge priority
 function getPriorityBadge($priority) {
@@ -818,9 +805,9 @@ try {
                     </div>
                 <?php else: ?>
                     <?php foreach ($reports as $report): 
-                        $customer_name = !empty($report['nama_customer']) 
-                            ? $report['nama_customer'] 
-                            : ($report['nama_perusahaan'] ?? 'Customer');
+                        $customer_name = !empty($report['nama_perusahaan']) 
+                            ? $report['nama_perusahaan'] 
+                            : ($report['nama_customer'] ?? 'Customer');
                         
                         $jam_info = '';
                         if (!empty($report['jam_mulai'])) {

@@ -64,17 +64,44 @@ try {
     $stmt->execute();
     $customer_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Ambil semua services untuk opsi manual
+    // Ambil semua services aktif untuk opsi manual
     $stmt = $pdo->prepare("SELECT id, kode_service, nama_service, harga FROM services WHERE status = 'Aktif' ORDER BY nama_service");
     $stmt->execute();
-    $services_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $all_services_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 } catch (PDOException $e) {
     $error = "Gagal mengambil data: " . $e->getMessage();
     error_log("Error create_report: " . $e->getMessage());
 }
 
-// Fungsi helper untuk format tanggal
+
+// AJAX Handler - Ambil layanan berdasarkan customer
+if (isset($_GET['action']) && $_GET['action'] == 'get_services' && isset($_GET['customer_id'])) {
+    $customer_id = (int)$_GET['customer_id'];
+    
+    try {
+        $stmt = $pdo->prepare("
+            SELECT s.id, s.kode_service, s.nama_service, s.harga
+            FROM services s
+            INNER JOIN customer_services cs ON s.id = cs.service_id
+            WHERE cs.customer_id = ? 
+            AND cs.status = 'Aktif'
+            AND s.status = 'Aktif'
+            ORDER BY s.nama_service
+        ");
+        $stmt->execute([$customer_id]);
+        $services = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        header('Content-Type: application/json');
+        echo json_encode($services);
+        exit();
+        
+    } catch (PDOException $e) {
+        header('Content-Type: application/json');
+        echo json_encode(['error' => 'Gagal mengambil data layanan']);
+        exit();
+    }
+}
 
 // Proses form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
@@ -593,6 +620,22 @@ function generateKodeLaporan($pdo) {
             padding: 20px 0;
             margin-top: 50px;
         }
+        
+        /* Loading Spinner */
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -774,8 +817,8 @@ function generateKodeLaporan($pdo) {
                     <div id="manual-section" style="display: none;">
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Pilih Customer</label>
-                                <select name="customer_id" class="form-select" id="customer_select">
+                                <label class="form-label">Pilih Customer <span class="text-danger">*</span></label>
+                                <select name="customer_id" class="form-select" id="customer_select" required>
                                     <option value="">-- Pilih Customer --</option>
                                     <?php foreach ($customer_data as $customer): 
                                         $customer_display = !empty($customer['nama_customer']) 
@@ -787,17 +830,24 @@ function generateKodeLaporan($pdo) {
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
+                                <div class="text-muted small mt-1">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    Pilih customer untuk melihat layanan yang tersedia
+                                </div>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Pilih Layanan</label>
-                                <select name="service_id" class="form-select" id="service_select">
-                                    <option value="">-- Pilih Layanan --</option>
-                                    <?php foreach ($services_data as $service): ?>
-                                        <option value="<?php echo $service['id']; ?>">
-                                            <?php echo htmlspecialchars($service['nama_service']); ?> (<?php echo $service['kode_service']; ?>)
-                                        </option>
-                                    <?php endforeach; ?>
+                                <label class="form-label">Pilih Layanan <span class="text-danger">*</span></label>
+                                <select name="service_id" class="form-select" id="service_select" required disabled>
+                                    <option value="">-- Pilih Customer terlebih dahulu --</option>
                                 </select>
+                                <div class="text-muted small mt-1" id="service-info">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    Layanan akan muncul setelah memilih customer
+                                </div>
+                                <div id="service-loading" style="display: none;">
+                                    <div class="loading-spinner"></div>
+                                    <span class="ms-2">Memuat layanan...</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -856,20 +906,6 @@ function generateKodeLaporan($pdo) {
                                   placeholder="Saran untuk customer, jadwal follow-up, tindakan pencegahan..." 
                                   rows="3"><?php echo htmlspecialchars($_POST['rekomendasi'] ?? ''); ?></textarea>
                     </div>
-                    
-                    <!-- <div class="mb-3">
-                        <label class="form-label">Rating Customer (1-5)</label>
-                        <div class="d-flex align-items-center">
-                            <div class="rating-stars">
-                                <?php for ($i = 1; $i <= 5; $i++): ?>
-                                    <i class="fas fa-star star-rating" data-value="<?php echo $i; ?>"></i>
-                                <?php endfor; ?>
-                            </div>
-                            <span class="ms-3 fw-bold text-primary" id="rating-text">5</span>
-                        </div>
-                        <input type="hidden" name="rating_customer" id="ratingInput" value="5">
-                        <small class="text-muted">Klik bintang untuk memberikan rating (opsional)</small>
-                    </div> -->
                 </div>
                 
                 <!-- Section 3: Bukti Foto -->
@@ -959,16 +995,18 @@ function generateKodeLaporan($pdo) {
         const manualRadio = document.getElementById('source_manual');
         const scheduleSection = document.getElementById('schedule-section');
         const manualSection = document.getElementById('manual-section');
+        const customerSelect = document.getElementById('customer_select');
+        const serviceSelect = document.getElementById('service_select');
         
         function toggleSections() {
             if (scheduleRadio.checked) {
                 scheduleSection.style.display = 'block';
                 manualSection.style.display = 'none';
                 // Disable manual inputs
-                document.querySelectorAll('#manual-section select').forEach(el => {
-                    el.disabled = true;
-                    el.required = false;
-                });
+                customerSelect.disabled = true;
+                customerSelect.required = false;
+                serviceSelect.disabled = true;
+                serviceSelect.required = false;
                 // Enable schedule inputs
                 document.querySelectorAll('#schedule-section input[type="radio"]').forEach(el => {
                     el.disabled = false;
@@ -982,11 +1020,11 @@ function generateKodeLaporan($pdo) {
                     el.disabled = true;
                     el.required = false;
                 });
-                // Enable manual inputs
-                document.querySelectorAll('#manual-section select').forEach(el => {
-                    el.disabled = false;
-                    el.required = true;
-                });
+                // Enable customer input, but service still disabled until customer selected
+                customerSelect.disabled = false;
+                customerSelect.required = true;
+                serviceSelect.disabled = true;
+                serviceSelect.required = false;
             }
         }
         
@@ -1008,37 +1046,67 @@ function generateKodeLaporan($pdo) {
             });
         });
         
-        // Rating stars
-        const ratingStars = document.querySelectorAll('.star-rating');
-        const ratingInput = document.getElementById('ratingInput');
-        const ratingText = document.getElementById('rating-text');
-        
-        ratingStars.forEach(star => {
-            star.addEventListener('click', function() {
-                const value = parseInt(this.getAttribute('data-value'));
-                ratingInput.value = value;
-                ratingText.textContent = value;
-                
-                // Update stars display
-                ratingStars.forEach((s, index) => {
-                    if (index < value) {
-                        s.classList.add('fas');
-                        s.classList.remove('far');
-                    } else {
-                        s.classList.add('far');
-                        s.classList.remove('fas');
-                    }
-                });
-            });
-        });
-        
-        // Initialize rating stars
-        ratingStars.forEach((star, index) => {
-            if (index < 5) {
-                star.classList.add('fas');
-            } else {
-                star.classList.add('far');
+        // Load services based on selected customer
+        customerSelect.addEventListener('change', function() {
+            const customerId = this.value;
+            const serviceSelect = document.getElementById('service_select');
+            const serviceInfo = document.getElementById('service-info');
+            const serviceLoading = document.getElementById('service-loading');
+            
+            if (!customerId) {
+                serviceSelect.innerHTML = '<option value="">-- Pilih Customer terlebih dahulu --</option>';
+                serviceSelect.disabled = true;
+                serviceInfo.style.display = 'block';
+                serviceLoading.style.display = 'none';
+                return;
             }
+            
+            // Show loading
+            serviceSelect.disabled = true;
+            serviceInfo.style.display = 'none';
+            serviceLoading.style.display = 'block';
+            
+            // Clear current options
+            serviceSelect.innerHTML = '<option value="">-- Memuat layanan... --</option>';
+            
+            // Fetch services via AJAX
+            fetch(`create_report.php?action=get_services&customer_id=${customerId}`)
+                .then(response => response.json())
+                .then(data => {
+                    serviceLoading.style.display = 'none';
+                    
+                    if (data.error) {
+                        serviceSelect.innerHTML = `<option value="">${data.error}</option>`;
+                        serviceInfo.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i> ${data.error}`;
+                        serviceInfo.style.display = 'block';
+                        return;
+                    }
+                    
+                    if (data.length === 0) {
+                        serviceSelect.innerHTML = '<option value="">-- Customer tidak memiliki layanan aktif --</option>';
+                        serviceSelect.disabled = true;
+                        serviceInfo.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i> Customer ini tidak memiliki layanan aktif. Pilih customer lain atau hubungi admin.';
+                        serviceInfo.style.display = 'block';
+                    } else {
+                        serviceSelect.innerHTML = '<option value="">-- Pilih Layanan --</option>';
+                        data.forEach(service => {
+                            const option = document.createElement('option');
+                            option.value = service.id;
+                            option.textContent = `${service.nama_service} (${service.kode_service})`;
+                            serviceSelect.appendChild(option);
+                        });
+                        serviceSelect.disabled = false;
+                        serviceInfo.innerHTML = `<i class="fas fa-check-circle me-1 text-success"></i> ${data.length} layanan tersedia`;
+                        serviceInfo.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    serviceLoading.style.display = 'none';
+                    serviceSelect.innerHTML = '<option value="">-- Gagal memuat layanan --</option>';
+                    serviceInfo.innerHTML = `<i class="fas fa-exclamation-triangle me-1"></i> Gagal memuat data layanan. Silakan coba lagi.`;
+                    serviceInfo.style.display = 'block';
+                    console.error('Error loading services:', error);
+                });
         });
         
         // Image preview function
@@ -1113,6 +1181,42 @@ function generateKodeLaporan($pdo) {
             const endMinutes = now.getMinutes().toString().padStart(2, '0');
             jamSelesaiInput.value = `${endHours}:${endMinutes}`;
         }
+        
+        // Form validation
+        const form = document.querySelector('form');
+        form.addEventListener('submit', function(e) {
+            // Check if manual mode is selected but service not selected
+            if (manualRadio.checked) {
+                if (!customerSelect.value) {
+                    e.preventDefault();
+                    alert('Silakan pilih customer terlebih dahulu!');
+                    customerSelect.focus();
+                    return;
+                }
+                
+                if (!serviceSelect.value) {
+                    e.preventDefault();
+                    alert('Silakan pilih layanan!');
+                    serviceSelect.focus();
+                    return;
+                }
+            }
+            
+            // Check time validation
+            const jamMulai = document.querySelector('input[name="jam_mulai"]').value;
+            const jamSelesai = document.querySelector('input[name="jam_selesai"]').value;
+            
+            if (jamMulai && jamSelesai) {
+                const start = new Date('2000-01-01T' + jamMulai + ':00');
+                const end = new Date('2000-01-01T' + jamSelesai + ':00');
+                
+                if (end <= start) {
+                    e.preventDefault();
+                    alert('Jam selesai harus setelah jam mulai!');
+                    return;
+                }
+            }
+        });
     });
     </script>
 </body>
