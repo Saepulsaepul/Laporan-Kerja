@@ -19,12 +19,12 @@ $filter_periode = $_GET['periode'] ?? '';
 
 // Ambil data untuk dropdowns
 try {
-    // Ambil customers dengan view baru
+    // Ambil customers dengan jumlah_station
     $customers = $pdo->query("
         SELECT c.id, 
                CONCAT(c.nama_perusahaan, ' - ', c.nama_customer) as display_name, 
                c.nama_perusahaan, c.nama_customer, c.telepon,
-               c.gedung, c.lantai, c.unit
+               c.gedung, c.lantai, c.unit, c.jumlah_station
         FROM customers c
         WHERE c.status = 'Aktif' 
         ORDER BY c.nama_perusahaan ASC
@@ -86,6 +86,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $jenis_periode = sanitizeInput($_POST['jenis_periode'] ?? 'Sekali');
         $jumlah_kunjungan = !empty($_POST['jumlah_kunjungan']) ? (int)$_POST['jumlah_kunjungan'] : 1;
         
+        // Ambil jumlah_station dari customer
+        $stmt = $pdo->prepare("SELECT jumlah_station FROM customers WHERE id = ?");
+        $stmt->execute([$customer_id]);
+        $customer_data = $stmt->fetch();
+        $jumlah_station = $customer_data ? $customer_data['jumlah_station'] : 0;
+        
+        // Jika jumlah_station ada dan lebih besar dari 0, gunakan untuk kunjungan
+        if ($jumlah_station > 0 && $jenis_periode === 'Sekali') {
+            $jumlah_kunjungan = $jumlah_station;
+        }
+        
         // Validasi untuk kunjungan berulang
         if ($jenis_periode !== 'Sekali' && $jumlah_kunjungan < 2) {
             $_SESSION['error'] = 'Jumlah kunjungan minimal 2 untuk jadwal berulang!';
@@ -104,34 +115,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $admin_id = $_SESSION['admin_id']; // Admin ID dari session
                     
                     // CREATE NEW SCHEDULE
-                    if ($action === 'create') {
-                        // Generate kode jadwal
-                        $is_recurring = ($jenis_periode !== 'Sekali');
-                        
-                        // Gunakan function dari database untuk generate kode
-                        $stmt = $pdo->prepare("SELECT fn_generate_kode_jadwal(?, ?) as kode_jadwal");
-                        $stmt->execute([$tanggal, $is_recurring]);
-                        $result = $stmt->fetch();
-                        $kode_jadwal = $result['kode_jadwal'];
-                        
-                        // Jika berulang, pastikan format -K01 untuk parent
-                        if ($is_recurring && strpos($kode_jadwal, '-K') === false) {
-                            $kode_jadwal = str_replace('-K01', '', $kode_jadwal) . '-K01';
-                        }
-                        
-                        // Insert jadwal utama
-                        $stmt = $pdo->prepare("
-                            INSERT INTO jadwal (
-                                kode_jadwal, admin_id, pekerja_id, customer_id, service_id, 
-                                tanggal, jam, lokasi, durasi_estimasi, status, prioritas, 
-                                catatan_admin, jenis_periode, jumlah_kunjungan, kunjungan_berjalan
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Menunggu', ?, ?, ?, ?, 0)
-                        ");
-                        $stmt->execute([
-                            $kode_jadwal, $admin_id, $pekerja_id, $customer_id, $service_id,
-                            $tanggal, $jam, $lokasi, $durasi_estimasi, $prioritas, 
-                            $catatan_admin, $jenis_periode, $jumlah_kunjungan
-                        ]);
+                   // CREATE NEW SCHEDULE
+if ($action === 'create') {
+    // Generate kode jadwal langsung di PHP
+    $tahun = date('Y', strtotime($tanggal));
+    $bulan = date('m', strtotime($tanggal));
+    
+    // Cari sequence terakhir untuk bulan ini
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(kode_jadwal, '/', -1), '-K', 1) AS UNSIGNED)), 0) + 1 as sequence
+        FROM jadwal 
+        WHERE kode_jadwal LIKE CONCAT('JDW/', ?, '/', ?, '/%')
+    ");
+    $stmt->execute([$tahun, $bulan]);
+    $result = $stmt->fetch();
+    $sequence = $result['sequence'];
+    
+    // Buat kode dasar
+    $kode_jadwal = sprintf('JDW/%s/%s/%03d', $tahun, $bulan, $sequence);
+    
+    // Jika recurring, tambah suffix -K01
+    $is_recurring = ($jenis_periode !== 'Sekali');
+    if ($is_recurring) {
+        $kode_jadwal .= '-K01';
+    }
+    
+    // Pastikan kode unik
+    $counter = 1;
+    while (true) {
+        $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM jadwal WHERE kode_jadwal = ?");
+        $stmt->execute([$kode_jadwal]);
+        $result = $stmt->fetch();
+        
+        if ($result['count'] == 0) {
+            break;
+        }
+        
+        if ($is_recurring) {
+            $kode_jadwal = sprintf('JDW/%s/%s/%03d-K01', $tahun, $bulan, $sequence + $counter);
+        } else {
+            $kode_jadwal = sprintf('JDW/%s/%s/%03d', $tahun, $bulan, $sequence + $counter);
+        }
+        
+        $counter++;
+    }
+    
+    // Insert jadwal utama
+    $stmt = $pdo->prepare("
+        INSERT INTO jadwal (
+            kode_jadwal, admin_id, pekerja_id, customer_id, service_id, 
+            tanggal, jam, lokasi, durasi_estimasi, status, prioritas, 
+            catatan_admin, jenis_periode, jumlah_kunjungan, kunjungan_berjalan
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Menunggu', ?, ?, ?, ?, 0)
+    ");
+    $stmt->execute([
+        $kode_jadwal, $admin_id, $pekerja_id, $customer_id, $service_id,
+        $tanggal, $jam, $lokasi, $durasi_estimasi, $prioritas, 
+        $catatan_admin, $jenis_periode, $jumlah_kunjungan
+    ]);
+    
+
                         
                         $jadwal_id = $pdo->lastInsertId();
                         
@@ -187,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                             
                             $_SESSION['success'] = 'Jadwal berulang berhasil dibuat! ' . $jumlah_kunjungan . ' kunjungan ' . strtolower($jenis_periode) . ' (Kode: ' . $kode_jadwal . ')';
                         } else {
-                            $_SESSION['success'] = 'Jadwal berhasil dibuat! Kode: ' . $kode_jadwal;
+                            $_SESSION['success'] = 'Jadwal berhasil dibuat! Kode: ' . $kode_jadwal . ' (' . $jumlah_kunjungan . ' station)';
                         }
                         
                     } 
@@ -297,7 +340,7 @@ try {
         SELECT 
             j.*,
             c.nama_perusahaan, c.nama_customer, c.telepon as customer_telepon,
-            c.gedung, c.lantai, c.unit,
+            c.gedung, c.lantai, c.unit, c.jumlah_station,
             s.nama_service, s.harga, s.kode_service, s.durasi_menit,
             u.nama as pekerja_nama, u.jabatan as pekerja_jabatan,
             a.nama as admin_nama,
@@ -520,6 +563,14 @@ require_once 'includes/header.php';
         margin-left: 0.5rem;
         border: 1px solid #ffeaa7;
     }
+    .station-badge {
+        background-color: #e3f2fd;
+        color: #1565c0;
+        padding: 0.25rem 0.75rem;
+        border-radius: 50px;
+        font-size: 0.75rem;
+        margin-left: 0.5rem;
+    }
 </style>
 
 <?php
@@ -643,6 +694,7 @@ require_once 'includes/navbar.php';
                 
                 $total_reports = 0;
                 $total_child_schedules = 0;
+                $total_stations = 0;
                 
                 foreach ($schedules as $schedule) {
                     if (isset($status_counts[$schedule['status']])) {
@@ -653,6 +705,7 @@ require_once 'includes/navbar.php';
                     }
                     $total_reports += $schedule['total_laporan'] ?? 0;
                     $total_child_schedules += $schedule['child_count'] ?? 0;
+                    $total_stations += $schedule['jumlah_station'] ?? 0;
                 }
             ?>
             <div class="row mb-4">
@@ -688,19 +741,19 @@ require_once 'includes/navbar.php';
                         </div>
                     </div>
                 </div>
-                <!-- <div class="col-md-2">
-                    <div class="card bg-secondary text-white">
-                        <div class="card-body">
-                            <h6 class="card-title">Child Schedules</h6>
-                            <h3 class="mb-0"><?php echo $total_child_schedules; ?></h3>
-                        </div>
-                    </div>
-                </div> -->
                 <div class="col-md-2">
                     <div class="card bg-light text-dark">
                         <div class="card-body">
                             <h6 class="card-title">Laporan</h6>
                             <h3 class="mb-0"><?php echo $total_reports; ?></h3>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="card bg-info text-white">
+                        <div class="card-body">
+                            <h6 class="card-title">Total Station</h6>
+                            <h3 class="mb-0"><?php echo $total_stations; ?></h3>
                         </div>
                     </div>
                 </div>
@@ -739,8 +792,14 @@ require_once 'includes/navbar.php';
                         $is_recurring = $schedule['jenis_periode'] !== 'Sekali';
                         $is_parent = empty($schedule['parent_jadwal_id']);
                         $is_child = !$is_parent;
-                        $kunjungan_info = '';
+                        $jumlah_station = $schedule['jumlah_station'] ?? 0;
+                        $jumlah_kunjungan = $schedule['jumlah_kunjungan'] ?? 1;
                         
+                        // Tampilkan info station jika ada
+                        $station_info = '';
+                        if ($jumlah_station > 0 && $schedule['jenis_periode'] === 'Sekali') {
+                            $station_info = '<span class="station-badge"><i class="fas fa-map-pin me-1"></i>' . $jumlah_station . ' Station</span>';
+                        }
                     
                     ?>
                         <div class="col-xl-6 col-lg-12 mb-4">
@@ -767,6 +826,7 @@ require_once 'includes/navbar.php';
                                                     <i class="fas fa-level-up-alt me-1"></i>Parent (<?php echo $schedule['child_count']; ?>)
                                                 </span>
                                             <?php endif; ?>
+                                            <?php echo $station_info; ?>
                                         </h5>
                                         <div class="d-flex align-items-center gap-2">
                                             <span class="schedule-code"><?php echo htmlspecialchars($schedule['kode_jadwal'] ?? 'JDW/XXXX/XX/XXX'); ?></span>
@@ -785,14 +845,17 @@ require_once 'includes/navbar.php';
                                 </div>
                                 
                                 <div class="schedule-body">
-                                    <?php if ($kunjungan_info): ?>
+                                    <?php if ($is_recurring && $jumlah_kunjungan > 1): ?>
                                     <div class="kunjungan-info mb-3">
                                         <i class="fas fa-calendar-check me-1"></i>
-                                        <?php echo $kunjungan_info; ?>
-                                        <?php if ($is_recurring && !empty($schedule['jumlah_kunjungan'])): ?>
-                                            <br><small>Total: <?php echo $schedule['jumlah_kunjungan']; ?> kunjungan, 
-                                            Selesai: <?php echo $schedule['kunjungan_berjalan'] ?? 0; ?></small>
-                                        <?php endif; ?>
+                                        Jadwal <?php echo strtolower($schedule['jenis_periode']); ?> - 
+                                        <?php echo $schedule['kunjungan_berjalan'] ?? 0; ?> dari <?php echo $jumlah_kunjungan; ?> kunjungan selesai
+                                    </div>
+                                    <?php elseif ($jumlah_station > 0 && $schedule['jenis_periode'] === 'Sekali'): ?>
+                                    <div class="kunjungan-info mb-3">
+                                        <i class="fas fa-map-marker-alt me-1"></i>
+                                        <?php echo $jumlah_station; ?> Station Inspeksi - 
+                                        <?php echo $schedule['kunjungan_berjalan'] ?? 0; ?> dari <?php echo $jumlah_kunjungan; ?> laporan dibuat
                                     </div>
                                     <?php endif; ?>
                                     
@@ -846,6 +909,11 @@ require_once 'includes/navbar.php';
                                                     <?php if (!empty($lokasi_detail)): ?>
                                                         <div class="location-detail mt-1">
                                                             <small><i class="fas fa-building me-1"></i><?php echo htmlspecialchars($lokasi_detail); ?></small>
+                                                        </div>
+                                                    <?php endif; ?>
+                                                    <?php if ($jumlah_station > 0): ?>
+                                                        <div class="location-detail mt-1">
+                                                            <small><i class="fas fa-map-pin me-1"></i><?php echo $jumlah_station; ?> Station Inspeksi</small>
                                                         </div>
                                                     <?php endif; ?>
                                                 </div>
@@ -927,7 +995,7 @@ require_once 'includes/navbar.php';
                                                     <li><a class="dropdown-item" href="?update_status=Selesai&id=<?php echo $schedule['id']; ?>">Set Selesai</a></li>
                                                     <li><hr class="dropdown-divider"></li>
                                                     <?php if ($schedule['total_laporan'] > 0): ?>
-                                                    <li><a class="dropdown-item" href="report.php?schedule_id=<?php echo $schedule['id']; ?>">
+                                                    <li><a class="dropdown-item" href="reports.php?schedule_id=<?php echo $schedule['id']; ?>">
                                                         <i class="fas fa-file-alt me-1"></i>Lihat Laporan (<?php echo $schedule['total_laporan']; ?>)
                                                     </a></li>
                                                     <?php endif; ?>
@@ -937,15 +1005,6 @@ require_once 'includes/navbar.php';
                                         </div>
                                         
                                         <div class="d-flex gap-2">
-                                            <!-- <?php if ($is_recurring || !$is_child): ?>
-                                                <?php if ($schedule['kunjungan_berjalan'] < $schedule['jumlah_kunjungan'] || $schedule['total_laporan'] == 0): ?>
-                                                <a href="report_create.php?schedule_id=<?php echo $schedule['id']; ?>" 
-                                                   class="btn btn-sm btn-success" title="Buat Laporan untuk Kunjungan Ini">
-                                                    <i class="fas fa-plus me-1"></i>Buat Laporan
-                                                </a>
-                                                <?php endif; ?>
-                                            <?php endif; ?> -->
-                                            
                                             <?php if ($schedule['total_laporan'] == 0 || $is_child): ?>
                                             <a href="?delete=<?php echo $schedule['id']; ?>" class="btn btn-sm btn-outline-danger" 
                                                onclick="return confirm('Hapus jadwal ini? Tindakan ini tidak dapat dibatalkan.')">
@@ -992,8 +1051,12 @@ require_once 'includes/navbar.php';
                                             data-telepon="<?php echo htmlspecialchars($customer['telepon']); ?>"
                                             data-gedung="<?php echo htmlspecialchars($customer['gedung'] ?? ''); ?>"
                                             data-lantai="<?php echo htmlspecialchars($customer['lantai'] ?? ''); ?>"
-                                            data-unit="<?php echo htmlspecialchars($customer['unit'] ?? ''); ?>">
+                                            data-unit="<?php echo htmlspecialchars($customer['unit'] ?? ''); ?>"
+                                            data-jumlah_station="<?php echo htmlspecialchars($customer['jumlah_station'] ?? 0); ?>">
                                         <?php echo htmlspecialchars($customer['display_name']); ?>
+                                        <?php if (!empty($customer['jumlah_station']) && $customer['jumlah_station'] > 0): ?>
+                                            (<?php echo $customer['jumlah_station']; ?> station)
+                                        <?php endif; ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -1057,10 +1120,10 @@ require_once 'includes/navbar.php';
                         </div>
                         
                         <div class="col-md-4">
-                            <label for="jumlah_kunjungan" class="form-label">Jumlah Kunjungan</label>
+                            <label for="jumlah_kunjungan" class="form-label">Jumlah Station</label>
                             <input type="number" class="form-control" id="jumlah_kunjungan" name="jumlah_kunjungan" 
                                    min="1" max="100" value="1">
-                            <small class="text-muted">Untuk jadwal berulang</small>
+                            <small class="text-muted">Akan otomatis sesuai customer</small>
                         </div>
                         
                         <div class="col-md-4">
@@ -1131,6 +1194,7 @@ document.addEventListener("DOMContentLoaded", function() {
     const durasiEstimasiInput = document.getElementById('durasi_estimasi');
     const jenisPeriodeSelect = document.getElementById('jenis_periode');
     const jumlahKunjunganInput = document.getElementById('jumlah_kunjungan');
+    const customerSelect = document.getElementById('customer_id');
     
     // Set default tanggal ke hari ini
     const today = new Date();
@@ -1151,8 +1215,9 @@ document.addEventListener("DOMContentLoaded", function() {
     });
     
     // Customer select change
-    document.getElementById('customer_id').addEventListener('change', function() {
+    customerSelect.addEventListener('change', function() {
         updateCustomerInfo();
+        updateJumlahKunjungan();
     });
     
     // Service select change
@@ -1162,15 +1227,7 @@ document.addEventListener("DOMContentLoaded", function() {
     
     // Jenis periode change
     jenisPeriodeSelect.addEventListener('change', function() {
-        if (this.value === 'Sekali') {
-            jumlahKunjunganInput.value = 1;
-            jumlahKunjunganInput.disabled = true;
-        } else {
-            jumlahKunjunganInput.disabled = false;
-            if (jumlahKunjunganInput.value < 2) {
-                jumlahKunjunganInput.value = 2;
-            }
-        }
+        updateJumlahKunjungan();
     });
     
     // Functions
@@ -1185,11 +1242,11 @@ document.addEventListener("DOMContentLoaded", function() {
         
         // Set default values
         document.getElementById('tanggal').value = todayStr;
+        document.getElementById('tanggal').min = todayStr;
         document.getElementById('jam').value = '08:00';
         document.getElementById('prioritas').value = 'Sedang';
         document.getElementById('jenis_periode').value = 'Sekali';
         document.getElementById('jumlah_kunjungan').value = 1;
-        document.getElementById('jumlah_kunjungan').disabled = true;
         document.getElementById('customer_id').value = '';
         document.getElementById('service_id').value = '';
         document.getElementById('pekerja_id').value = '';
@@ -1197,6 +1254,7 @@ document.addEventListener("DOMContentLoaded", function() {
         
         updateCustomerInfo();
         updateServiceInfo();
+        updateJumlahKunjungan();
         
         scheduleModal.show();
     }
@@ -1216,6 +1274,7 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById('service_id').value = data.service_id || '';
         document.getElementById('pekerja_id').value = data.pekerja_id || '';
         document.getElementById('tanggal').value = data.tanggal || todayStr;
+        document.getElementById('tanggal').min = data.tanggal || todayStr;
         document.getElementById('jam').value = data.jam || '08:00';
         document.getElementById('prioritas').value = data.prioritas || 'Sedang';
         document.getElementById('durasi_estimasi').value = data.durasi_estimasi || '';
@@ -1224,22 +1283,16 @@ document.addEventListener("DOMContentLoaded", function() {
         document.getElementById('lokasi').value = data.lokasi || '';
         document.getElementById('catatan_admin').value = data.catatan_admin || '';
         
-        // Enable/disable jumlah kunjungan based on jenis_periode
-        if (data.jenis_periode === 'Sekali') {
-            document.getElementById('jumlah_kunjungan').disabled = true;
-        } else {
-            document.getElementById('jumlah_kunjungan').disabled = false;
-        }
-        
         // Trigger change events untuk update preview
         updateCustomerInfo();
         updateServiceInfo();
+        updateJumlahKunjungan();
         
         scheduleModal.show();
     }
 
     function updateCustomerInfo() {
-        const select = document.getElementById('customer_id');
+        const select = customerSelect;
         const selectedOption = select.options[select.selectedIndex];
         
         if (selectedOption.value) {
@@ -1247,6 +1300,7 @@ document.addEventListener("DOMContentLoaded", function() {
             const gedung = selectedOption.dataset.gedung || '-';
             const lantai = selectedOption.dataset.lantai || '-';
             const unit = selectedOption.dataset.unit || '-';
+            const jumlah_station = selectedOption.dataset.jumlah_station || 0;
             
             customerInfo.innerHTML = `
                 <div class="row small">
@@ -1254,6 +1308,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     <div class="col-6"><strong>Gedung:</strong> ${gedung}</div>
                     <div class="col-6"><strong>Lantai:</strong> ${lantai}</div>
                     <div class="col-6"><strong>Unit:</strong> ${unit}</div>
+                    ${jumlah_station > 0 ? `<div class="col-12 mt-1"><strong>Jumlah Station:</strong> ${jumlah_station}</div>` : ''}
                 </div>
             `;
             customerInfo.classList.remove('alert-light');
@@ -1297,6 +1352,35 @@ document.addEventListener("DOMContentLoaded", function() {
             servicePreview.innerHTML = '<small class="text-muted">Pilih layanan untuk melihat info</small>';
             servicePreview.classList.remove('alert-info');
             servicePreview.classList.add('alert-light');
+        }
+    }
+
+    function updateJumlahKunjungan() {
+        const select = customerSelect;
+        const selectedOption = select.options[select.selectedIndex];
+        const jenisPeriode = jenisPeriodeSelect.value;
+        
+        if (selectedOption.value) {
+            const jumlah_station = parseInt(selectedOption.dataset.jumlah_station || 0);
+            
+            if (jenisPeriode === 'Sekali' && jumlah_station > 0) {
+                // Jika jadwal sekali dan customer punya station, gunakan jumlah station
+                jumlahKunjunganInput.value = jumlah_station;
+                jumlahKunjunganInput.readOnly = true;
+                jumlahKunjunganInput.title = 'Jumlah station dari customer: ' + jumlah_station;
+            } else if (jenisPeriode === 'Sekali') {
+                // Jika jadwal sekali tapi tidak ada station
+                jumlahKunjunganInput.value = 1;
+                jumlahKunjunganInput.readOnly = true;
+                jumlahKunjunganInput.title = 'Jadwal sekali hanya untuk 1 kunjungan';
+            } else {
+                // Jika jadwal berulang
+                jumlahKunjunganInput.readOnly = false;
+                jumlahKunjunganInput.title = '';
+                if (jumlahKunjunganInput.value < 2) {
+                    jumlahKunjunganInput.value = 2;
+                }
+            }
         }
     }
 

@@ -53,6 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $gedung = sanitizeInput($_POST['gedung'] ?? '');
     $lantai = sanitizeInput($_POST['lantai'] ?? '');
     $unit = sanitizeInput($_POST['unit'] ?? '');
+    $jumlah_station = isset($_POST['jumlah_station']) ? (int)$_POST['jumlah_station'] : 0; // Tambah field baru
     $keterangan = sanitizeInput($_POST['keterangan'] ?? '');
     $status = sanitizeInput($_POST['status'] ?? 'Aktif');
     $id = isset($_POST['id']) ? (int)$_POST['id'] : null;
@@ -74,6 +75,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 
     if (empty(trim($nama_customer))) {
         $errors[] = 'Nama customer wajib diisi';
+    }
+
+    // Validasi jumlah station (harus angka positif)
+    if ($jumlah_station < 0) {
+        $errors[] = 'Jumlah station inspeksi harus berupa angka positif';
     }
 
     // Validasi email
@@ -113,17 +119,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 if ($stmt->fetch()) {
                     $_SESSION['error'] = 'Customer dengan nama perusahaan dan nama customer tersebut sudah ada!';
                 } else {
-                    // Insert customer
+                    // Insert customer - TAMBAH jumlah_station
                     $stmt = $pdo->prepare("
                         INSERT INTO customers (
                             nama_perusahaan, nama_customer, telepon, email, alamat, 
-                            gedung, lantai, unit, keterangan, status
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            gedung, lantai, unit, jumlah_station, keterangan, status
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ");
                     
                     $stmt->execute([
                         $nama_perusahaan, $nama_customer, $telepon, $email, $alamat,
-                        $gedung, $lantai, $unit, $keterangan, $status
+                        $gedung, $lantai, $unit, $jumlah_station, $keterangan, $status
                     ]);
                     
                     $customer_id = $pdo->lastInsertId();
@@ -148,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         }
                     }
                     
-                    $_SESSION['success'] = 'Customer berhasil ditambahkan dengan ' . count($jenis_layanan_ids) . ' layanan!';
+                    $_SESSION['success'] = 'Customer berhasil ditambahkan dengan ' . count($jenis_layanan_ids) . ' layanan dan ' . $jumlah_station . ' station inspeksi!';
                     error_log("Customer created: $nama_perusahaan - $nama_customer");
                 }
             } elseif ($action === 'update' && $id) {
@@ -158,16 +164,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 if ($stmt->fetch()) {
                     $_SESSION['error'] = 'Customer dengan nama perusahaan dan nama customer tersebut sudah ada!';
                 } else {
-                    // Update customer
+                    // Update customer - TAMBAH jumlah_station
                     $stmt = $pdo->prepare("
                         UPDATE customers SET 
                             nama_perusahaan = ?, nama_customer = ?, telepon = ?, email = ?, alamat = ?,
-                            gedung = ?, lantai = ?, unit = ?, keterangan = ?, status = ?
+                            gedung = ?, lantai = ?, unit = ?, jumlah_station = ?, keterangan = ?, status = ?
                         WHERE id = ?
                     ");
                     $stmt->execute([
                         $nama_perusahaan, $nama_customer, $telepon, $email, $alamat,
-                        $gedung, $lantai, $unit, $keterangan, $status, $id
+                        $gedung, $lantai, $unit, $jumlah_station, $keterangan, $status, $id
                     ]);
                     
                     // Hapus semua layanan lama
@@ -194,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                         }
                     }
                     
-                    $_SESSION['success'] = 'Customer berhasil diperbarui dengan ' . count($jenis_layanan_ids) . ' layanan!';
+                    $_SESSION['success'] = 'Customer berhasil diperbarui dengan ' . count($jenis_layanan_ids) . ' layanan dan ' . $jumlah_station . ' station inspeksi!';
                 }
             }
             
@@ -256,6 +262,14 @@ if (isset($_GET['delete'])) {
 // GET DATA
 // =========================
 try {
+    // Tambah kolom jumlah_station di tabel customers
+    // Periksa apakah kolom sudah ada
+    $checkColumn = $pdo->query("SHOW COLUMNS FROM customers LIKE 'jumlah_station'");
+    if ($checkColumn->rowCount() == 0) {
+        // Tambah kolom jika belum ada
+        $pdo->exec("ALTER TABLE customers ADD COLUMN jumlah_station INT DEFAULT 0 AFTER unit");
+    }
+
     // Ambil semua services untuk dropdown
     $stmtServices = $pdo->query("SELECT id, kode_service, nama_service FROM services WHERE status = 'Aktif' ORDER BY nama_service");
     $services = $stmtServices->fetchAll();
@@ -395,6 +409,13 @@ require_once $header_path;
     .service-checkbox {
         margin-bottom: 8px;
     }
+    .station-badge {
+        background-color: #e3f2fd;
+        color: #1565c0;
+        padding: 0.25rem 0.75rem;
+        border-radius: 50px;
+        font-size: 0.75rem;
+    }
 </style>
 
 <?php 
@@ -532,6 +553,11 @@ if (file_exists($navbar_path)) {
                                             <span class="badge bg-secondary ms-2">
                                                 <i class="fas fa-cog me-1"></i><?= $cust['service_count'] ?> Layanan
                                             </span>
+                                            <?php if (!empty($cust['jumlah_station']) && $cust['jumlah_station'] > 0): ?>
+                                                <span class="station-badge ms-2">
+                                                    <i class="fas fa-map-marker-alt me-1"></i><?= $cust['jumlah_station'] ?> Station
+                                                </span>
+                                            <?php endif; ?>
                                         </p>
                                     </div>
 
@@ -575,6 +601,13 @@ if (file_exists($navbar_path)) {
                                                 if (!empty($cust['unit'])) $lokasi[] = $cust['unit'];
                                                 echo implode(' - ', $lokasi);
                                                 ?>
+                                            </p>
+                                        <?php endif; ?>
+                                        
+                                        <?php if (!empty($cust['jumlah_station']) && $cust['jumlah_station'] > 0): ?>
+                                            <p class="mt-1 mb-0 text-muted small">
+                                                <i class="fas fa-map-pin me-1"></i>
+                                                <strong>Jumlah Station Inspeksi:</strong> <?= $cust['jumlah_station'] ?>
                                             </p>
                                         <?php endif; ?>
                                     </div>
@@ -776,6 +809,28 @@ if (file_exists($navbar_path)) {
                                    placeholder="Contoh: Unit 801, Area A">
                         </div>
 
+                        <!-- Jumlah Station Inspeksi (NEW FIELD) -->
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Jumlah Station Inspeksi</label>
+                            <small class="text-muted d-block mb-1">Jumlah titik inspeksi untuk laporan</small>
+                            <input type="number" 
+                                   name="jumlah_station" 
+                                   class="form-control" 
+                                   value="<?= htmlspecialchars($editCustomer['jumlah_station'] ?? 0) ?>"
+                                   min="0"
+                                   max="100"
+                                   placeholder="Contoh: 5">
+                        </div>
+
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Status Customer</label>
+                            <select name="status" class="form-select">
+                                <option value="Aktif" <?= ($editCustomer['status'] ?? '') == 'Aktif' ? 'selected' : '' ?>>Aktif</option>
+                                <option value="Nonaktif" <?= ($editCustomer['status'] ?? '') == 'Nonaktif' ? 'selected' : '' ?>>Nonaktif</option>
+                                <option value="Trial" <?= ($editCustomer['status'] ?? '') == 'Trial' ? 'selected' : '' ?>>Trial</option>
+                            </select>
+                        </div>
+
                         <!-- Informasi Layanan (MULTIPLE SELECTION) -->
                         <div class="col-12">
                             <label class="form-label fw-bold">Pilih Layanan <span class="text-danger">*</span></label>
@@ -821,15 +876,6 @@ if (file_exists($navbar_path)) {
                         </div>
 
                         <div class="col-md-6">
-                            <label class="form-label fw-bold">Status Customer</label>
-                            <select name="status" class="form-select">
-                                <option value="Aktif" <?= ($editCustomer['status'] ?? '') == 'Aktif' ? 'selected' : '' ?>>Aktif</option>
-                                <option value="Nonaktif" <?= ($editCustomer['status'] ?? '') == 'Nonaktif' ? 'selected' : '' ?>>Nonaktif</option>
-                                <option value="Trial" <?= ($editCustomer['status'] ?? '') == 'Trial' ? 'selected' : '' ?>>Trial</option>
-                            </select>
-                        </div>
-
-                        <div class="col-md-6">
                             <label class="form-label fw-bold">Tanggal Mulai Kontrak</label>
                             <input type="date" 
                                    name="tanggal_mulai_kontrak" 
@@ -845,7 +891,7 @@ if (file_exists($navbar_path)) {
                                    value="<?= htmlspecialchars($editCustomerServices[0]['tanggal_selesai'] ?? '') ?>">
                         </div>
 
-                        <div class="col-md-12">
+                        <div class="col-md-6">
                             <label class="form-label fw-bold">Nilai Kontrak Total</label>
                             <div class="input-group">
                                 <span class="input-group-text">Rp</span>
@@ -955,6 +1001,7 @@ if (file_exists($navbar_path)) {
                 const namaPerusahaan = document.querySelector('input[name="nama_perusahaan"]');
                 const namaCustomer = document.querySelector('input[name="nama_customer"]');
                 const checkboxes = document.querySelectorAll('input[name="jenis_layanan_ids[]"]:checked');
+                const jumlahStation = document.querySelector('input[name="jumlah_station"]');
                 
                 // Validasi required fields
                 if (!namaPerusahaan.value.trim()) {
@@ -968,6 +1015,14 @@ if (file_exists($navbar_path)) {
                     e.preventDefault();
                     alert('Nama customer wajib diisi');
                     namaCustomer.focus();
+                    return false;
+                }
+                
+                // Validasi jumlah station
+                if (jumlahStation.value && parseInt(jumlahStation.value) < 0) {
+                    e.preventDefault();
+                    alert('Jumlah station inspeksi harus berupa angka positif');
+                    jumlahStation.focus();
                     return false;
                 }
                 

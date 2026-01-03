@@ -27,7 +27,7 @@ $filter_date_from = $_GET['date_from'] ?? '';
 $filter_date_to = $_GET['date_to'] ?? '';
 $search_query = $_GET['search'] ?? '';
 
-// Query dasar dengan filter
+// Query dasar dengan filter - PERBAIKAN: tambah field station
 $sql = "
     SELECT 
         r.*,
@@ -46,6 +46,8 @@ $sql = "
         r.jam_selesai,
         r.rating_customer,
         r.created_at,
+        r.station_id,           -- TAMBAHAN: station_id
+        r.station_nama,         -- TAMBAHAN: station_nama
         c.nama_customer,
         c.nama_perusahaan,
         c.telepon as customer_telepon,
@@ -59,11 +61,14 @@ $sql = "
         j.jenis_periode as jadwal_periode,
         j.jumlah_kunjungan as jadwal_total_kunjungan,
         j.kunjungan_berjalan as jadwal_kunjungan_berjalan,
-        j.catatan_admin as jadwal_catatan
+        j.catatan_admin as jadwal_catatan,
+        st.nama_station as station_detail,  -- TAMBAHAN: detail station
+        st.lokasi as station_lokasi
     FROM reports r
     INNER JOIN customers c ON r.customer_id = c.id
     INNER JOIN services s ON r.service_id = s.id
     LEFT JOIN jadwal j ON r.jadwal_id = j.id
+    LEFT JOIN stations st ON r.customer_id = st.customer_id AND r.station_id = st.station_number  -- TAMBAHAN: join stations
     WHERE r.user_id = ?
 ";
 
@@ -83,8 +88,9 @@ if ($filter_date_to) {
 
 // Filter pencarian
 if ($search_query) {
-    $conditions[] = "(c.nama_customer LIKE ? OR c.nama_perusahaan LIKE ? OR r.kode_laporan LIKE ? OR s.nama_service LIKE ?)";
+    $conditions[] = "(c.nama_customer LIKE ? OR c.nama_perusahaan LIKE ? OR r.kode_laporan LIKE ? OR s.nama_service LIKE ? OR r.station_nama LIKE ?)";
     $search_term = "%" . $search_query . "%";
+    $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
     $params[] = $search_term;
@@ -105,7 +111,7 @@ $per_page = 10;
 $offset = ($page - 1) * $per_page;
 
 try {
-    // HITUNG TOTAL DATA - PERBAIKAN DI SINI
+    // HITUNG TOTAL DATA - TAMBAHAN: perbaikan query count
     $count_sql = "SELECT COUNT(*) FROM reports r 
                   INNER JOIN customers c ON r.customer_id = c.id 
                   INNER JOIN services s ON r.service_id = s.id 
@@ -126,11 +132,12 @@ try {
     }
     
     if ($search_query) {
-        $count_conditions[] = "(c.nama_customer LIKE :search OR c.nama_perusahaan LIKE :search2 OR r.kode_laporan LIKE :search3 OR s.nama_service LIKE :search4)";
-        $count_params[':search'] = "%" . $search_query . "%";
+        $count_conditions[] = "(c.nama_customer LIKE :search1 OR c.nama_perusahaan LIKE :search2 OR r.kode_laporan LIKE :search3 OR s.nama_service LIKE :search4 OR r.station_nama LIKE :search5)";
+        $count_params[':search1'] = "%" . $search_query . "%";
         $count_params[':search2'] = "%" . $search_query . "%";
         $count_params[':search3'] = "%" . $search_query . "%";
         $count_params[':search4'] = "%" . $search_query . "%";
+        $count_params[':search5'] = "%" . $search_query . "%";
     }
     
     if (!empty($count_conditions)) {
@@ -155,8 +162,6 @@ try {
     $error = "Gagal mengambil data laporan: " . $e->getMessage();
     error_log("Error my_reports: " . $e->getMessage() . "\nSQL: " . $sql);
 }
-
-
 
 // Fungsi untuk badge priority
 function getPriorityBadge($priority) {
@@ -185,7 +190,7 @@ function getPeriodBadge($period) {
     return $badges[$period] ?? 'bg-secondary';
 }
 
-// Hitung statistik untuk dashboard
+// Hitung statistik untuk dashboard - TAMBAHAN: statistik station
 try {
     // Total laporan
     $stmt_total = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE user_id = ?");
@@ -208,8 +213,13 @@ try {
     $avg_rating = $stmt_rating->fetchColumn();
     $avg_rating = $avg_rating ? round($avg_rating, 1) : 0;
     
+    // TAMBAHAN: Total laporan dengan station
+    $stmt_station = $pdo->prepare("SELECT COUNT(*) FROM reports WHERE user_id = ? AND station_id IS NOT NULL");
+    $stmt_station->execute([$user_id]);
+    $station_count = $stmt_station->fetchColumn();
+    
 } catch (PDOException $e) {
-    $total_count = $monthly_count = $today_count = $avg_rating = 0;
+    $total_count = $monthly_count = $today_count = $avg_rating = $station_count = 0;
 }
 ?>
 
@@ -230,6 +240,38 @@ try {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <style>
+        /* TAMBAHAN: Styling untuk station badge */
+        .station-badge {
+            background: linear-gradient(135deg, #0d6efd 0%, #6610f2 100%);
+            color: white;
+            font-size: 0.75rem;
+            padding: 3px 10px;
+            border-radius: 12px;
+            display: inline-flex;
+            align-items: center;
+            margin-right: 5px;
+            margin-bottom: 5px;
+        }
+        
+        .station-badge i {
+            font-size: 0.7rem;
+            margin-right: 3px;
+        }
+        
+        .station-info {
+            background: #e7f5ff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            margin: 5px 0;
+            border-left: 3px solid #0d6efd;
+            font-size: 0.85rem;
+        }
+        
+        .station-info strong {
+            color: #0d6efd;
+        }
+        
+        /* Sisanya tetap sama */
         :root {
             --primary-color: #198754;
             --secondary-color: #20c997;
@@ -364,6 +406,10 @@ try {
             font-weight: 500;
         }
         
+        .station-stats-icon {
+            color: var(--accent-color) !important;
+        }
+        
         /* Report Cards */
         .report-card {
             background: white;
@@ -377,6 +423,10 @@ try {
         
         .report-card:hover {
             box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .report-card.with-station {
+            border-left-color: var(--accent-color);
         }
         
         .report-header {
@@ -709,7 +759,7 @@ try {
             </div>
         <?php endif; ?>
 
-        <!-- Stats Overview -->
+        <!-- Stats Overview - TAMBAHAN: Station Stats -->
         <div class="row mb-4">
             <div class="col-md-3 col-sm-6">
                 <div class="stats-card">
@@ -739,29 +789,36 @@ try {
                 </div>
             </div>
             <div class="col-md-3 col-sm-6">
+                <div class="stats-card">
+                    <div class="stats-icon station-stats-icon">
+                        <i class="fas fa-map-pin"></i>
+                    </div>
+                    <div class="stats-value"><?php echo $station_count; ?></div>
+                    <div class="stats-label">Laporan Station</div>
+                </div>
             </div>
         </div>
 
         <!-- Filter Section -->
         <div class="filter-card">
             <form method="GET" action="" class="row g-3">
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Dari Tanggal</label>
                     <input type="date" name="date_from" class="form-control" 
                            value="<?php echo htmlspecialchars($filter_date_from); ?>">
                 </div>
                 
-                <div class="col-md-4">
+                <div class="col-md-3">
                     <label class="form-label fw-bold">Sampai Tanggal</label>
                     <input type="date" name="date_to" class="form-control" 
                            value="<?php echo htmlspecialchars($filter_date_to); ?>">
                 </div>
                 
-                <div class="col-md-4">
+                <div class="col-md-6">
                     <label class="form-label fw-bold">Cari</label>
                     <div class="input-group">
                         <input type="text" name="search" class="form-control" 
-                               placeholder="Cari customer/layanan/kode..." 
+                               placeholder="Cari customer/layanan/station/kode..." 
                                value="<?php echo htmlspecialchars($search_query); ?>">
                         <button type="submit" class="btn btn-primary">
                             <i class="fas fa-search"></i>
@@ -822,8 +879,19 @@ try {
                         if (!empty($report['jadwal_periode']) && $report['jadwal_periode'] != 'Sekali') {
                             $visit_info = 'Kunjungan ' . $report['nomor_kunjungan'] . '/' . $report['jadwal_total_kunjungan'];
                         }
+                        
+                        // TAMBAHAN: Info station
+                        $station_info = '';
+                        $has_station = false;
+                        if (!empty($report['station_id'])) {
+                            $has_station = true;
+                            $station_display = !empty($report['station_nama']) 
+                                ? htmlspecialchars($report['station_nama'])
+                                : 'Station #' . htmlspecialchars($report['station_id']);
+                            $station_info = '<span class="station-badge"><i class="fas fa-map-pin"></i>' . $station_display . '</span>';
+                        }
                     ?>
-                        <div class="report-card">
+                        <div class="report-card <?php echo $has_station ? 'with-station' : ''; ?>">
                             <div class="report-header">
                                 <div>
                                     <div class="report-code">
@@ -831,6 +899,7 @@ try {
                                         <?php if (!empty($visit_info)): ?>
                                             <span class="badge-kunjungan ms-2"><?php echo $visit_info; ?></span>
                                         <?php endif; ?>
+                                        <?php echo $station_info; ?>
                                     </div>
                                     <div class="report-date">
                                         <i class="far fa-calendar me-1"></i>
@@ -866,6 +935,16 @@ try {
                                     <span class="text-muted">(<?php echo htmlspecialchars($report['kode_service']); ?>)</span>
                                 <?php endif; ?>
                             </div>
+                            
+                            <!-- TAMBAHAN: Station Detail -->
+                            <?php if ($has_station && !empty($report['station_detail'])): ?>
+                                <div class="station-info mb-2">
+                                    <strong>Lokasi Station:</strong> <?php echo htmlspecialchars($report['station_detail']); ?>
+                                    <?php if (!empty($report['station_lokasi'])): ?>
+                                        <br><small><?php echo htmlspecialchars($report['station_lokasi']); ?></small>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endif; ?>
                             
                             <div class="report-excerpt">
                                 <?php echo htmlspecialchars(substr($report['keterangan'] ?? '', 0, 200)); ?>
@@ -909,6 +988,8 @@ try {
                                 </div>
                                 
                                 <div class="report-actions">
+                                   
+                                    
                                     <!-- Tombol untuk melihat detail dengan modal -->
                                     <button type="button" class="btn btn-sm btn-primary-custom" 
                                             data-bs-toggle="modal" data-bs-target="#detailModal"
