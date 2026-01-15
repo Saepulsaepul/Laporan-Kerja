@@ -22,8 +22,7 @@ $services_data = [];
 
 // Ambil data jadwal yang belum selesai atau perlu kunjungan berikutnya
 try {
-    // Ambil jadwal yang assign ke pekerja ini dengan status Menunggu atau Berjalan
-    // PERUBAHAN: Tambah jumlah_station dan sesuaikan logika untuk station inspeksi
+    // Query untuk jadwal aktif pekerja
     $stmt = $pdo->prepare("
         SELECT 
             j.*,
@@ -40,16 +39,10 @@ try {
             s.kode_service,
             s.harga,
             s.deskripsi as deskripsi_service,
-            -- Hitung jumlah laporan yang sudah dibuat untuk jadwal ini
+            -- Hitung laporan yang sudah dibuat untuk jadwal ini
             (SELECT COUNT(*) FROM reports r WHERE r.jadwal_id = j.id) as total_laporan_dibuat,
-            -- Ambil nomor kunjungan terakhir yang sudah dilaporkan
-            (SELECT COALESCE(MAX(r.nomor_kunjungan), 0) FROM reports r WHERE r.jadwal_id = j.id) as last_reported_kunjungan,
-            -- Hitung progress untuk station inspeksi
-            CASE 
-                WHEN j.jenis_periode = 'Sekali' AND c.jumlah_station > 0 
-                THEN CONCAT((SELECT COALESCE(MAX(r.nomor_kunjungan), 0) FROM reports r WHERE r.jadwal_id = j.id), '/', c.jumlah_station)
-                ELSE ''
-            END as station_progress
+            -- Ambil station yang sudah dilaporkan
+            (SELECT GROUP_CONCAT(DISTINCT station_id) FROM reports WHERE jadwal_id = j.id AND station_id IS NOT NULL) as reported_stations
         FROM jadwal j
         LEFT JOIN customers c ON j.customer_id = c.id
         LEFT JOIN services s ON j.service_id = s.id
@@ -57,21 +50,63 @@ try {
         AND j.status IN ('Berjalan', 'Menunggu')
         AND j.tanggal <= CURDATE()
         AND (
-            -- Untuk jadwal sekali: cek apakah ada jumlah_station
-            (j.jenis_periode = 'Sekali' AND (
-                -- Jika ada jumlah_station, cek progress
-                (c.jumlah_station > 0 AND j.kunjungan_berjalan < c.jumlah_station) OR
-                -- Jika tidak ada jumlah_station, cek belum ada laporan sama sekali
-                (c.jumlah_station = 0 AND NOT EXISTS (SELECT 1 FROM reports r WHERE r.jadwal_id = j.id))
+            -- Untuk jadwal sekali dengan station: belum semua station dilaporkan
+            (j.jenis_periode = 'Sekali' AND c.jumlah_station > 0 AND NOT (
+                SELECT COUNT(DISTINCT station_id) = c.jumlah_station 
+                FROM reports 
+                WHERE jadwal_id = j.id AND station_id IS NOT NULL
+            ))
+            OR
+            -- Untuk jadwal sekali tanpa station: belum ada laporan sama sekali
+            (j.jenis_periode = 'Sekali' AND c.jumlah_station = 0 AND NOT EXISTS (
+                SELECT 1 FROM reports WHERE jadwal_id = j.id
             ))
             OR
             -- Untuk jadwal berulang: kunjungan_berjalan < jumlah_kunjungan
             (j.jenis_periode != 'Sekali' AND j.kunjungan_berjalan < j.jumlah_kunjungan)
         )
-        ORDER BY j.prioritas DESC, j.tanggal ASC, j.jam ASC
+        ORDER BY 
+            CASE j.prioritas
+                WHEN 'Darurat' THEN 1
+                WHEN 'Tinggi' THEN 2
+                WHEN 'Sedang' THEN 3
+                WHEN 'Rendah' THEN 4
+                ELSE 5
+            END,
+            j.tanggal ASC, 
+            j.jam ASC
     ");
     $stmt->execute([$user_id]);
     $jadwal_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Untuk jadwal dengan station, ambil data station
+    foreach ($jadwal_data as &$jadwal) {
+        if ($jadwal['jumlah_station'] > 0 && $jadwal['jenis_periode'] == 'Sekali') {
+            $stmt = $pdo->prepare("
+                SELECT 
+                    station_number,
+                    nama_station,
+                    lokasi,
+                    status,
+                    -- Cek apakah sudah dilaporkan
+                    EXISTS (
+                        SELECT 1 FROM reports r 
+                        WHERE r.jadwal_id = ? 
+                        AND r.station_id = stations.station_number
+                    ) as sudah_dilaporkan
+                FROM stations 
+                WHERE customer_id = ? 
+                ORDER BY station_number ASC
+            ");
+            $stmt->execute([$jadwal['jadwal_id'], $jadwal['customer_id']]);
+            $jadwal['stations'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Parse reported stations
+            $reported_stations = $jadwal['reported_stations'] ? explode(',', $jadwal['reported_stations']) : [];
+            $jadwal['reported_stations_array'] = array_map('intval', $reported_stations);
+        }
+    }
+    unset($jadwal);
 
     // Ambil semua customer untuk opsi manual
     $stmt = $pdo->prepare("
@@ -83,16 +118,10 @@ try {
     $stmt->execute();
     $customer_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Ambil semua services aktif untuk opsi manual
-    $stmt = $pdo->prepare("SELECT id, kode_service, nama_service, harga FROM services WHERE status = 'Aktif' ORDER BY nama_service");
-    $stmt->execute();
-    $all_services_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
 } catch (PDOException $e) {
     $error = "Gagal mengambil data: " . $e->getMessage();
     error_log("Error create_report: " . $e->getMessage());
 }
-
 
 // AJAX Handler - Ambil layanan berdasarkan customer
 if (isset($_GET['action']) && $_GET['action'] == 'get_services' && isset($_GET['customer_id'])) {
@@ -136,7 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $jam_selesai = $_POST['jam_selesai'] ?? date('H:i', strtotime('+1 hour'));
     $rating_customer = $_POST['rating_customer'] ?? 5;
     
-    // TAMBAHAN: Field untuk station inspeksi
+    // Field untuk station inspeksi
     $station_id = isset($_POST['station_id']) ? (int)$_POST['station_id'] : null;
     $station_nama = trim($_POST['station_nama'] ?? '');
     
@@ -151,35 +180,44 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         try {
             $pdo->beginTransaction();
             
-            // Jika memilih jadwal, ambil data terkait
             $nomor_kunjungan = 1;
             $selected_jadwal = null;
-            $jumlah_station = 0; // TAMBAHAN: Variabel untuk jumlah station
+            $jumlah_station = 0;
             
             if (!empty($jadwal_id)) {
+                // AMBIL data jadwal dengan informasi station
                 $stmt = $pdo->prepare("
-                    SELECT j.*, c.jumlah_station, jd.nomor_kunjungan as next_kunjungan
+                    SELECT 
+                        j.*, 
+                        c.jumlah_station,
+                        c.nama_perusahaan,
+                        s.nama_service,
+                        (SELECT COALESCE(MAX(nomor_kunjungan), 0) FROM reports WHERE jadwal_id = j.id) as last_kunjungan
                     FROM jadwal j
                     LEFT JOIN customers c ON j.customer_id = c.id
-                    LEFT JOIN (
-                        SELECT jadwal_id, MAX(nomor_kunjungan) as nomor_kunjungan 
-                        FROM reports 
-                        WHERE jadwal_id = ?
-                    ) jd ON j.id = jd.jadwal_id
+                    LEFT JOIN services s ON j.service_id = s.id
                     WHERE j.id = ?
                 ");
-                $stmt->execute([$jadwal_id, $jadwal_id]);
+                $stmt->execute([$jadwal_id]);
                 $selected_jadwal = $stmt->fetch(PDO::FETCH_ASSOC);
                 
                 if ($selected_jadwal) {
                     $customer_id = $selected_jadwal['customer_id'];
                     $service_id = $selected_jadwal['service_id'];
-                    $nomor_kunjungan = ($selected_jadwal['next_kunjungan'] ?? 0) + 1;
-                    $jumlah_station = $selected_jadwal['jumlah_station'] ?? 0; // AMBIL jumlah_station
+                    $nomor_kunjungan = ($selected_jadwal['last_kunjungan'] ?? 0) + 1;
+                    $jumlah_station = $selected_jadwal['jumlah_station'] ?? 0;
                     
-                    // TAMBAHAN: Jika ada station_id, override nomor_kunjungan
-                    if ($station_id && $station_id > 0 && $station_id <= $jumlah_station) {
-                        // Cek apakah station ini sudah dilaporkan
+                    // Validasi station
+                    if ($station_id && $station_id > 0) {
+                        if ($selected_jadwal['jenis_periode'] != 'Sekali') {
+                            throw new Exception("Station hanya bisa dipilih untuk jadwal sekali!");
+                        }
+                        
+                        if ($station_id > $jumlah_station) {
+                            throw new Exception("Nomor station melebihi jumlah station yang tersedia!");
+                        }
+                        
+                        // Cek apakah station sudah dilaporkan
                         $stmt_check = $pdo->prepare("
                             SELECT COUNT(*) as sudah_dilaporkan 
                             FROM reports 
@@ -190,21 +228,35 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         $check_result = $stmt_check->fetch(PDO::FETCH_ASSOC);
                         
                         if ($check_result['sudah_dilaporkan'] > 0) {
-                            throw new Exception("Station {$station_id} sudah dilaporkan sebelumnya!");
+                            throw new Exception("Station #{$station_id} sudah dilaporkan sebelumnya!");
                         }
                         
-                        // Jika station_id valid dan belum dilaporkan, gunakan station_id sebagai acuan
-                        // Tapi tetap gunakan nomor_kunjungan yang benar dari sequence
+                        // Ambil nama station dari database jika kosong
+                        if (empty($station_nama)) {
+                            $stmt_station = $pdo->prepare("
+                                SELECT nama_station FROM stations 
+                                WHERE customer_id = ? AND station_number = ?
+                            ");
+                            $stmt_station->execute([$customer_id, $station_id]);
+                            $station_info = $stmt_station->fetch(PDO::FETCH_ASSOC);
+                            if ($station_info) {
+                                $station_nama = $station_info['nama_station'];
+                            }
+                        }
+                    }
+                    
+                    // Validasi khusus untuk jadwal dengan station
+                    if ($selected_jadwal['jenis_periode'] == 'Sekali' && $jumlah_station > 0 && !$station_id) {
+                        throw new Exception("Pilih salah satu station untuk jadwal ini!");
                     }
                 }
             }
             
-            // Handle upload foto - bukti
+            // Handle upload foto
             $foto_bukti = null;
             $foto_sebelum = null;
             $foto_sesudah = null;
             
-            // Fungsi untuk handle upload
             function uploadFoto($file_key, $prefix, $user_id) {
                 if (isset($_FILES[$file_key]) && $_FILES[$file_key]['error'] === UPLOAD_ERR_OK) {
                     $upload_dir = '../assets/uploads/';
@@ -216,7 +268,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $allowed_ext = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
                     
                     if (in_array($file_ext, $allowed_ext)) {
-                        // Cek ukuran file (max 5MB)
                         if ($_FILES[$file_key]['size'] > 5 * 1024 * 1024) {
                             return ['error' => "File terlalu besar! Maksimal 5MB."];
                         }
@@ -264,14 +315,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Generate kode laporan otomatis
                 $kode_laporan = generateKodeLaporan($pdo);
                 
-                // TAMBAHAN: Update query untuk include station_id dan station_nama
+                // INSERT laporan dengan station
                 $stmt = $pdo->prepare("
                     INSERT INTO reports 
                     (kode_laporan, user_id, jadwal_id, customer_id, service_id, nomor_kunjungan,
                      keterangan, bahan_digunakan, hasil_pengamatan, rekomendasi, 
                      foto_bukti, foto_sebelum, foto_sesudah,
                      tanggal_pelaporan, jam_mulai, jam_selesai, rating_customer,
-                     station_id, station_nama)  -- TAMBAHAN FIELD BARU
+                     station_id, station_nama) 
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 
@@ -293,57 +344,90 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     $jam_mulai,
                     $jam_selesai,
                     $rating_customer,
-                    $station_id,        // TAMBAHAN
-                    $station_nama      // TAMBAHAN
+                    $station_id,
+                    $station_nama
                 ]);
                 
                 $report_id = $pdo->lastInsertId();
                 
-                // Update status jadwal jika berdasarkan jadwal
+                // Update status jadwal
                 if (!empty($jadwal_id) && $selected_jadwal) {
-                    // PERUBAHAN: Logika update untuk station inspeksi
                     $is_single_schedule = ($selected_jadwal['jenis_periode'] == 'Sekali');
                     $has_stations = ($jumlah_station > 0);
                     
                     if ($is_single_schedule && $has_stations) {
-                        // Jadwal sekali dengan station inspeksi
-                        // Update kunjungan_berjalan
+                        // Jadwal sekali dengan station
+                        // Update kunjungan_berjalan = jumlah station yang sudah dilaporkan
                         $stmt = $pdo->prepare("
                             UPDATE jadwal 
                             SET kunjungan_berjalan = (
-                                SELECT COUNT(*) FROM reports WHERE jadwal_id = ?
-                            ) 
+                                SELECT COUNT(DISTINCT station_id) 
+                                FROM reports 
+                                WHERE jadwal_id = ? AND station_id IS NOT NULL
+                            ),
+                            station_terakhir = ?,
+                            total_station_selesai = (
+                                SELECT COUNT(DISTINCT station_id) 
+                                FROM reports 
+                                WHERE jadwal_id = ? AND station_id IS NOT NULL
+                            ),
+                            updated_at = NOW()
                             WHERE id = ?
                         ");
-                        $stmt->execute([$jadwal_id, $jadwal_id]);
+                        $stmt->execute([
+                            $jadwal_id,
+                            $station_id,
+                            $jadwal_id,
+                            $jadwal_id
+                        ]);
                         
                         // Cek apakah semua station sudah dilaporkan
-                        $stmt_check_complete = $pdo->prepare("
-                            SELECT COUNT(*) as reported_count 
+                        $stmt_check = $pdo->prepare("
+                            SELECT COUNT(DISTINCT station_id) as reported_count 
                             FROM reports 
-                            WHERE jadwal_id = ?
+                            WHERE jadwal_id = ? AND station_id IS NOT NULL
                         ");
-                        $stmt_check_complete->execute([$jadwal_id]);
-                        $complete_result = $stmt_check_complete->fetch(PDO::FETCH_ASSOC);
+                        $stmt_check->execute([$jadwal_id]);
+                        $check_result = $stmt_check->fetch(PDO::FETCH_ASSOC);
                         
-                        if ($complete_result['reported_count'] >= $jumlah_station) {
-                            // Semua station sudah dilaporkan, set status Selesai
-                            $stmt = $pdo->prepare("UPDATE jadwal SET status = 'Selesai' WHERE id = ?");
+                        if ($check_result['reported_count'] >= $jumlah_station) {
+                            // Semua station selesai
+                            $stmt = $pdo->prepare("
+                                UPDATE jadwal 
+                                SET status = 'Selesai', 
+                                    updated_at = NOW()
+                                WHERE id = ?
+                            ");
                             $stmt->execute([$jadwal_id]);
                         }
                     } elseif ($is_single_schedule && !$has_stations) {
-                        // Jadwal sekali tanpa station - langsung selesai setelah 1 laporan
-                        $stmt = $pdo->prepare("UPDATE jadwal SET status = 'Selesai' WHERE id = ?");
+                        // Jadwal sekali tanpa station
+                        $stmt = $pdo->prepare("
+                            UPDATE jadwal 
+                            SET status = 'Selesai', 
+                                kunjungan_berjalan = 1,
+                                updated_at = NOW()
+                            WHERE id = ?
+                        ");
                         $stmt->execute([$jadwal_id]);
                     } else {
                         // Jadwal berulang
-                        // Update kunjungan_berjalan
-                        $stmt = $pdo->prepare("UPDATE jadwal SET kunjungan_berjalan = ? WHERE id = ?");
+                        $stmt = $pdo->prepare("
+                            UPDATE jadwal 
+                            SET kunjungan_berjalan = ?,
+                                updated_at = NOW()
+                            WHERE id = ?
+                        ");
                         $stmt->execute([$nomor_kunjungan, $jadwal_id]);
                         
                         // Cek apakah ini kunjungan terakhir
                         if ($nomor_kunjungan >= $selected_jadwal['jumlah_kunjungan']) {
-                            $stmt = $pdo->prepare("UPDATE jadwal SET status = 'Selesai' WHERE id = ?");
+                            $stmt = $pdo->prepare("
+                                UPDATE jadwal 
+                                SET status = 'Selesai', 
+                                    updated_at = NOW()
+                                WHERE id = ?
+                            ");
                             $stmt->execute([$jadwal_id]);
                         }
                     }
@@ -351,12 +435,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 
                 $pdo->commit();
                 
-                // Pesan sukses yang lebih informatif
-                $success_message = "Laporan berhasil disimpan! Kode: " . $kode_laporan;
-                $success_message .= " (Kunjungan ke-" . $nomor_kunjungan . ")";
+                // Pesan sukses
+                $success_message = "✅ Laporan berhasil disimpan!";
+                $success_message .= "<br><strong>Kode:</strong> " . $kode_laporan;
+                $success_message .= "<br><strong>Kunjungan:</strong> ke-" . $nomor_kunjungan;
                 
                 if ($station_id) {
-                    $success_message .= " - Station: " . ($station_nama ?: "Station #" . $station_id);
+                    $success_message .= "<br><strong>Station:</strong> " . ($station_nama ?: "Station #" . $station_id);
+                }
+                
+                if ($selected_jadwal) {
+                    $success_message .= "<br><strong>Customer:</strong> " . $selected_jadwal['nama_perusahaan'];
+                    $success_message .= "<br><strong>Layanan:</strong> " . $selected_jadwal['nama_service'];
                 }
                 
                 $success = $success_message;
@@ -364,18 +454,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 // Reset form jika sukses
                 $_POST = array();
                 
-                // Redirect setelah 3 detik
-                header("refresh:3;url=my_reports.php");
+                // Redirect ke dashboard setelah 5 detik
+                header("refresh:5;url=dashboard.php");
                 
             }
             
         } catch (PDOException $e) {
             $pdo->rollBack();
             $error = "Gagal menyimpan laporan: " . $e->getMessage();
-            error_log("Error save report: " . $e->getMessage());
+            error_log("Error save report: " . $e->getMessage() . "\n" . $e->getTraceAsString());
         } catch (Exception $e) {
             $pdo->rollBack();
-            $error = "Gagal menyimpan laporan: " . $e->getMessage();
+            $error = $e->getMessage();
             error_log("Error save report: " . $e->getMessage());
         }
     }
@@ -386,7 +476,6 @@ function generateKodeLaporan($pdo) {
     $tahun = date('Y');
     $bulan = date('m');
     
-    // Cari sequence terakhir untuk bulan ini
     $stmt = $pdo->prepare("
         SELECT COALESCE(MAX(CAST(SUBSTRING(kode_laporan, 14) AS UNSIGNED)), 0) + 1 
         FROM reports 
@@ -416,7 +505,7 @@ function generateKodeLaporan($pdo) {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <style>
-        /* TAMBAHAN: Styling untuk station info */
+        /* Styling untuk station info */
         .station-info {
             background: #e7f5ff;
             border-radius: 8px;
@@ -443,11 +532,12 @@ function generateKodeLaporan($pdo) {
         .station-card {
             background: #f8f9fa;
             border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 15px;
+            padding: 12px;
+            margin-bottom: 10px;
             border: 1px solid #e9ecef;
             cursor: pointer;
             transition: all 0.3s ease;
+            position: relative;
         }
         
         .station-card:hover {
@@ -459,6 +549,33 @@ function generateKodeLaporan($pdo) {
             border-color: #0d6efd;
             background: rgba(13, 110, 253, 0.1);
             box-shadow: 0 5px 15px rgba(13, 110, 253, 0.1);
+        }
+        
+        .station-card.reported {
+            opacity: 0.6;
+            background: #f1f3f4;
+            cursor: not-allowed;
+        }
+        
+        .station-card.reported:hover {
+            border-color: #e9ecef;
+            background: #f1f3f4;
+        }
+        
+        .station-card input[disabled] {
+            cursor: not-allowed;
+        }
+        
+        .station-card label {
+            cursor: pointer;
+            display: block;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+        }
+        
+        .station-card.reported label {
+            cursor: not-allowed;
         }
         
         .station-radio {
@@ -694,6 +811,7 @@ function generateKodeLaporan($pdo) {
             border: 1px solid #e9ecef;
             cursor: pointer;
             transition: all 0.3s ease;
+            position: relative;
         }
         
         .jadwal-card:hover {
@@ -708,7 +826,18 @@ function generateKodeLaporan($pdo) {
         }
         
         .jadwal-radio {
-            display: none;
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            width: 20px;
+            height: 20px;
+            margin: 0;
+            cursor: pointer;
+            z-index: 2;
+        }
+        
+        .jadwal-info {
+            margin-left: 30px;
         }
         
         .jadwal-info h6 {
@@ -783,6 +912,27 @@ function generateKodeLaporan($pdo) {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        /* Station check icon */
+        .station-check-icon {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: #198754;
+            font-size: 1.2rem;
+            display: none;
+        }
+        
+        .station-card.selected .station-check-icon {
+            display: block;
+        }
+        
+        /* Image preview */
+        .image-preview img {
+            max-width: 100%;
+            max-height: 150px;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
@@ -851,7 +1001,7 @@ function generateKodeLaporan($pdo) {
         <?php if (!empty($success)): ?>
             <div class="alert alert-success alert-custom alert-dismissible fade show" role="alert">
                 <i class="fas fa-check-circle me-2"></i>
-                <?php echo htmlspecialchars($success); ?>
+                <?php echo $success; ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
@@ -893,29 +1043,37 @@ function generateKodeLaporan($pdo) {
                             <label class="form-label mb-3">Pilih Jadwal yang Dilaporkan:</label>
                             <?php foreach ($jadwal_data as $jadwal): 
                                 $customer_name = !empty($jadwal['nama_perusahaan']) ? $jadwal['nama_perusahaan'] : $jadwal['nama_customer'];
+                                $reported_stations = $jadwal['reported_stations_array'] ?? [];
+                                $station_count = $jadwal['jumlah_station'] ?? 0;
+                                
+                                // Tentukan apakah jadwal ini sudah selesai
+                                $is_completed = false;
+                                if ($jadwal['jenis_periode'] == 'Sekali' && $station_count > 0) {
+                                    $is_completed = count($reported_stations) >= $station_count;
+                                } elseif ($jadwal['jenis_periode'] == 'Sekali') {
+                                    $is_completed = $jadwal['total_laporan_dibuat'] > 0;
+                                } else {
+                                    $is_completed = $jadwal['kunjungan_berjalan'] >= $jadwal['jumlah_kunjungan'];
+                                }
+                                
+                                // Skip jika sudah selesai
+                                if ($is_completed) continue;
+                                
                                 $next_kunjungan = ($jadwal['last_reported_kunjungan'] ?? 0) + 1;
-                                $jumlah_station = $jadwal['jumlah_station'] ?? 0;
                                 
                                 // Tentukan badge warna berdasarkan jenis periode
                                 $period_class = 'indicator-' . strtolower($jadwal['jenis_periode']);
                                 $priority_class = 'priority-' . strtolower($jadwal['prioritas']);
-                                
-                                // Tentukan progress info
-                                $progress_info = '';
-                                if ($jadwal['jenis_periode'] == 'Sekali' && $jumlah_station > 0) {
-                                    $progress_info = "{$jadwal['kunjungan_berjalan']}/{$jumlah_station} Station";
-                                } elseif ($jadwal['jenis_periode'] != 'Sekai') {
-                                    $progress_info = "Kunjungan {$jadwal['kunjungan_berjalan']}/{$jadwal['jumlah_kunjungan']}";
-                                }
                             ?>
-                                <label class="jadwal-card" id="jadwal-<?php echo $jadwal['jadwal_id']; ?>">
+                                <div class="jadwal-card" id="jadwal-<?php echo $jadwal['jadwal_id']; ?>">
                                     <input type="radio" name="jadwal_id" value="<?php echo $jadwal['jadwal_id']; ?>" 
                                            class="jadwal-radio" 
                                            data-customer-id="<?php echo $jadwal['customer_id']; ?>"
                                            data-service-id="<?php echo $jadwal['service_id']; ?>"
-                                           data-station-count="<?php echo $jumlah_station; ?>"
+                                           data-station-count="<?php echo $station_count; ?>"
                                            data-jenis-periode="<?php echo $jadwal['jenis_periode']; ?>"
-                                           required>
+                                           data-jadwal-id="<?php echo $jadwal['jadwal_id']; ?>"
+                                           id="jadwal_<?php echo $jadwal['jadwal_id']; ?>">
                                     <div class="jadwal-info">
                                         <div class="d-flex justify-content-between align-items-start">
                                             <h6 class="mb-1"><?php echo htmlspecialchars($customer_name); ?></h6>
@@ -953,44 +1111,97 @@ function generateKodeLaporan($pdo) {
                                             </small>
                                         </div>
                                         
-                                        <!-- TAMBAHAN: Info Station Inspeksi -->
-                                        <?php if ($jumlah_station > 0 && $jadwal['jenis_periode'] == 'Sekali'): ?>
+                                        <!-- Info Station Inspeksi -->
+                                        <?php if ($station_count > 0 && $jadwal['jenis_periode'] == 'Sekali'): ?>
                                             <div class="station-info mt-2">
                                                 <div class="d-flex justify-content-between align-items-center">
                                                     <div>
                                                         <i class="fas fa-map-pin me-1"></i>
-                                                        <strong><?php echo $jumlah_station; ?> Station Inspeksi</strong>
+                                                        <strong><?php echo $station_count; ?> Station Inspeksi</strong>
+                                                        <span class="badge bg-info ms-2"><?php echo count($reported_stations); ?>/<?php echo $station_count; ?> sudah dilaporkan</span>
                                                     </div>
-                                                    <span class="station-progress"><?php echo $progress_info; ?> selesai</span>
                                                 </div>
                                                 
-                                                <!-- Station Selector (akan ditampilkan via JavaScript) -->
+                                                <!-- Station Selector - DISEMBUNYIKAN DI AWAL -->
                                                 <div class="station-selector mt-2" id="station-selector-<?php echo $jadwal['jadwal_id']; ?>" style="display: none;">
-                                                    <label class="form-label small">Pilih Station yang Dilaporkan:</label>
-                                                    <div class="d-flex flex-wrap gap-2 mb-2">
-                                                        <?php for ($i = 1; $i <= $jumlah_station; $i++): ?>
-                                                            <div class="station-card">
+                                                    <label class="form-label small mb-2">Pilih Station yang Dilaporkan:</label>
+                                                    <div class="d-flex flex-wrap gap-2 mb-2" id="station-container-<?php echo $jadwal['jadwal_id']; ?>">
+                                                        <?php 
+                                                        // Tampilkan station dari data yang sudah diambil
+                                                        if (isset($jadwal['stations']) && !empty($jadwal['stations'])) {
+                                                            foreach ($jadwal['stations'] as $station): 
+                                                                $is_reported = in_array($station['station_number'], $reported_stations);
+                                                        ?>
+                                                            <div class="station-card <?php echo $is_reported ? 'reported' : ''; ?>" 
+                                                                 style="flex: 1 1 calc(50% - 10px); min-width: 200px;"
+                                                                 onclick="selectStation(<?php echo $jadwal['jadwal_id']; ?>, <?php echo $station['station_number']; ?>)">
+                                                                <input type="radio" 
+                                                                       class="station-radio" 
+                                                                       name="station_id_<?php echo $jadwal['jadwal_id']; ?>" 
+                                                                       value="<?php echo $station['station_number']; ?>"
+                                                                       data-jadwal-id="<?php echo $jadwal['jadwal_id']; ?>"
+                                                                       id="station_<?php echo $jadwal['jadwal_id']; ?>_<?php echo $station['station_number']; ?>"
+                                                                       <?php echo $is_reported ? 'disabled' : ''; ?>>
+                                                                <div class="d-flex justify-content-between align-items-center">
+                                                                    <span>
+                                                                        <strong>Station #<?php echo $station['station_number']; ?></strong>
+                                                                        <br>
+                                                                        <small><?php echo htmlspecialchars($station['nama_station']); ?></small>
+                                                                    </span>
+                                                                    <i class="fas fa-check-circle station-check-icon"></i>
+                                                                </div>
+                                                                <?php if (!empty($station['lokasi'])): ?>
+                                                                    <small class="text-muted d-block mt-1">
+                                                                        <i class="fas fa-location-dot me-1"></i>
+                                                                        <?php echo htmlspecialchars($station['lokasi']); ?>
+                                                                    </small>
+                                                                <?php endif; ?>
+                                                                <?php if ($is_reported): ?>
+                                                                    <small class="text-success d-block mt-1">
+                                                                        <i class="fas fa-check me-1"></i>Sudah dilaporkan
+                                                                    </small>
+                                                                <?php endif; ?>
+                                                            </div>
+                                                        <?php 
+                                                            endforeach;
+                                                        } else {
+                                                            // Fallback: tampilkan station secara numerik
+                                                            for ($i = 1; $i <= $station_count; $i++): 
+                                                                $is_reported = in_array($i, $reported_stations);
+                                                        ?>
+                                                            <div class="station-card <?php echo $is_reported ? 'reported' : ''; ?>" 
+                                                                 style="flex: 1 1 calc(50% - 10px); min-width: 200px;"
+                                                                 onclick="selectStation(<?php echo $jadwal['jadwal_id']; ?>, <?php echo $i; ?>)">
                                                                 <input type="radio" 
                                                                        class="station-radio" 
                                                                        name="station_id_<?php echo $jadwal['jadwal_id']; ?>" 
                                                                        value="<?php echo $i; ?>"
                                                                        data-jadwal-id="<?php echo $jadwal['jadwal_id']; ?>"
-                                                                       id="station_<?php echo $jadwal['jadwal_id']; ?>_<?php echo $i; ?>">
-                                                                <label for="station_<?php echo $jadwal['jadwal_id']; ?>_<?php echo $i; ?>" 
-                                                                       class="mb-0 w-100">
-                                                                    <div class="d-flex justify-content-between align-items-center">
-                                                                        <span>Station #<?php echo $i; ?></span>
-                                                                        <i class="fas fa-check-circle text-success" style="display: none;"></i>
-                                                                    </div>
-                                                                </label>
+                                                                       id="station_<?php echo $jadwal['jadwal_id']; ?>_<?php echo $i; ?>"
+                                                                       <?php echo $is_reported ? 'disabled' : ''; ?>>
+                                                                <div class="d-flex justify-content-between align-items-center">
+                                                                    <span>
+                                                                        <strong>Station #<?php echo $i; ?></strong>
+                                                                    </span>
+                                                                    <i class="fas fa-check-circle station-check-icon"></i>
+                                                                </div>
+                                                                <?php if ($is_reported): ?>
+                                                                    <small class="text-success d-block mt-1">
+                                                                        <i class="fas fa-check me-1"></i>Sudah dilaporkan
+                                                                    </small>
+                                                                <?php endif; ?>
                                                             </div>
-                                                        <?php endfor; ?>
+                                                        <?php 
+                                                            endfor;
+                                                        }
+                                                        ?>
                                                     </div>
                                                     <div class="mb-2">
                                                         <label class="form-label small">Nama Station (Opsional):</label>
                                                         <input type="text" 
                                                                name="station_nama_<?php echo $jadwal['jadwal_id']; ?>" 
-                                                               class="form-control form-control-sm" 
+                                                               class="form-control form-control-sm station-nama-input" 
+                                                               data-jadwal-id="<?php echo $jadwal['jadwal_id']; ?>"
                                                                placeholder="Contoh: Area Parkir Bawah, Ruang Server, dll">
                                                     </div>
                                                 </div>
@@ -1020,7 +1231,7 @@ function generateKodeLaporan($pdo) {
                                             </div>
                                         <?php endif; ?>
                                     </div>
-                                </label>
+                                </div>
                             <?php endforeach; ?>
                         <?php endif; ?>
                     </div>
@@ -1064,7 +1275,7 @@ function generateKodeLaporan($pdo) {
                             </div>
                         </div>
                         
-                        <!-- TAMBAHAN: Station untuk manual input -->
+                        <!-- Station untuk manual input -->
                         <div id="manual-station-section" style="display: none;">
                             <div class="row">
                                 <div class="col-md-6 mb-3">
@@ -1137,7 +1348,6 @@ function generateKodeLaporan($pdo) {
                                   placeholder="Saran untuk customer, jadwal follow-up, tindakan pencegahan..." 
                                   rows="3"><?php echo htmlspecialchars($_POST['rekomendasi'] ?? ''); ?></textarea>
                     </div>
-
                 </div>
                 
                 <!-- Section 3: Bukti Foto -->
@@ -1225,6 +1435,45 @@ function generateKodeLaporan($pdo) {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
     <script>
+    // Fungsi untuk memilih station
+    function selectStation(jadwalId, stationId) {
+        console.log('selectStation called:', { jadwalId, stationId });
+        
+        // Reset semua station card untuk jadwal ini
+        const stationContainer = document.getElementById(`station-container-${jadwalId}`);
+        if (stationContainer) {
+            stationContainer.querySelectorAll('.station-card').forEach(card => {
+                if (!card.classList.contains('reported')) {
+                    card.classList.remove('selected');
+                }
+            });
+        }
+        
+        // Aktifkan station yang dipilih
+        const stationRadio = document.getElementById(`station_${jadwalId}_${stationId}`);
+        if (stationRadio && !stationRadio.disabled) {
+            stationRadio.checked = true;
+            const selectedCard = stationRadio.closest('.station-card');
+            if (selectedCard) {
+                selectedCard.classList.add('selected');
+                
+                // Set hidden fields
+                document.getElementById('station_id_field').value = stationId;
+                
+                // Ambil nama station jika ada
+                const stationNamaInput = document.querySelector(`.station-nama-input[data-jadwal-id="${jadwalId}"]`);
+                if (stationNamaInput) {
+                    document.getElementById('station_nama_field').value = stationNamaInput.value;
+                }
+                
+                console.log('Station selected:', {
+                    station_id: stationId,
+                    station_nama: document.getElementById('station_nama_field').value
+                });
+            }
+        }
+    }
+    
     document.addEventListener('DOMContentLoaded', function() {
         // Toggle antara jadwal dan manual
         const scheduleRadio = document.getElementById('source_schedule');
@@ -1278,92 +1527,98 @@ function generateKodeLaporan($pdo) {
         // Initialize
         toggleSections();
         
-        // Jadwal card selection
+        // Jadwal card selection - Klik pada seluruh card
+        document.querySelectorAll('.jadwal-card').forEach(card => {
+            card.addEventListener('click', function(e) {
+                // Jangan trigger jika yang diklik adalah radio button
+                if (e.target.type === 'radio') return;
+                
+                const radio = this.querySelector('.jadwal-radio');
+                if (radio && !radio.disabled) {
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change'));
+                }
+            });
+        });
+        
+        // Jadwal radio button change event
         document.querySelectorAll('.jadwal-radio').forEach(radio => {
             radio.addEventListener('change', function() {
-                // Reset semua card
+                console.log('Jadwal radio changed:', this.value);
+                
+                // Reset semua jadwal card
                 document.querySelectorAll('.jadwal-card').forEach(card => {
                     card.classList.remove('selected');
                 });
                 
-                // Sembunyikan semua station selector
+                // SEMBUNYIKAN semua station selector
                 document.querySelectorAll('.station-selector').forEach(selector => {
                     selector.style.display = 'none';
                 });
                 
                 // Reset semua station selection
-                document.querySelectorAll('.station-radio').forEach(stationRadio => {
-                    stationRadio.checked = false;
-                    const stationCard = stationRadio.closest('.station-card');
-                    if (stationCard) {
-                        stationCard.classList.remove('selected');
-                        stationCard.querySelector('.fa-check-circle').style.display = 'none';
+                document.querySelectorAll('.station-card').forEach(card => {
+                    if (!card.classList.contains('reported')) {
+                        card.classList.remove('selected');
                     }
                 });
                 
+                // Reset hidden fields
+                document.getElementById('station_id_field').value = '';
+                document.getElementById('station_nama_field').value = '';
+                
                 if (this.checked) {
-                    this.closest('.jadwal-card').classList.add('selected');
+                    const jadwalCard = this.closest('.jadwal-card');
+                    if (jadwalCard) {
+                        jadwalCard.classList.add('selected');
+                    }
                     
                     // Tampilkan station selector jika ada station
                     const stationCount = parseInt(this.dataset.stationCount || 0);
                     const jenisPeriode = this.dataset.jenisPeriode;
-                    const jadwalId = this.value;
+                    const jadwalId = this.dataset.jadwalId || this.value;
+                    
+                    console.log('Jadwal selected:', { 
+                        stationCount, 
+                        jenisPeriode, 
+                        jadwalId,
+                        hasStationSelector: document.getElementById(`station-selector-${jadwalId}`) !== null
+                    });
                     
                     if (jenisPeriode === 'Sekali' && stationCount > 0) {
                         const stationSelector = document.getElementById(`station-selector-${jadwalId}`);
+                        
                         if (stationSelector) {
                             stationSelector.style.display = 'block';
+                            console.log('Station selector displayed for jadwal:', jadwalId);
+                            
+                            // Auto-select first available station jika belum ada yang dipilih
+                            setTimeout(() => {
+                                const availableStation = stationSelector.querySelector('.station-card:not(.reported)');
+                                if (availableStation && !document.getElementById('station_id_field').value) {
+                                    const stationId = availableStation.querySelector('.station-radio').value;
+                                    selectStation(jadwalId, stationId);
+                                    console.log('Auto-selected station:', stationId);
+                                }
+                            }, 100);
+                        } else {
+                            console.error('Station selector not found for jadwal:', jadwalId);
                         }
+                    } else {
+                        console.log('No station selector needed for this jadwal');
                     }
-                    
-                    // Reset hidden fields
-                    document.getElementById('station_id_field').value = '';
-                    document.getElementById('station_nama_field').value = '';
                 }
             });
         });
         
-        // Station card selection
-        document.addEventListener('change', function(e) {
-            if (e.target.classList.contains('station-radio')) {
-                const stationRadio = e.target;
-                const stationId = stationRadio.value;
-                const jadwalId = stationRadio.dataset.jadwalId;
-                
-                // Reset semua station card untuk jadwal ini
-                document.querySelectorAll(`input[name="station_id_${jadwalId}"]`).forEach(radio => {
-                    const card = radio.closest('.station-card');
-                    if (card) {
-                        card.classList.remove('selected');
-                        card.querySelector('.fa-check-circle').style.display = 'none';
-                    }
-                });
-                
-                // Aktifkan station yang dipilih
-                const selectedCard = stationRadio.closest('.station-card');
-                if (selectedCard) {
-                    selectedCard.classList.add('selected');
-                    selectedCard.querySelector('.fa-check-circle').style.display = 'inline-block';
-                    
-                    // Set hidden fields
-                    document.getElementById('station_id_field').value = stationId;
-                    
-                    // Ambil nama station jika ada
-                    const stationNamaInput = document.querySelector(`input[name="station_nama_${jadwalId}"]`);
-                    if (stationNamaInput) {
-                        document.getElementById('station_nama_field').value = stationNamaInput.value;
-                    }
-                }
-            }
-        });
-        
         // Update station nama ketika diinput
         document.addEventListener('input', function(e) {
-            if (e.target.name && e.target.name.startsWith('station_nama_')) {
-                const jadwalId = e.target.name.replace('station_nama_', '');
+            if (e.target.classList.contains('station-nama-input')) {
+                const jadwalId = e.target.dataset.jadwalId;
                 const selectedStation = document.querySelector(`input[name="station_id_${jadwalId}"]:checked`);
                 if (selectedStation) {
                     document.getElementById('station_nama_field').value = e.target.value;
+                    console.log('Station name updated:', e.target.value);
                 }
             }
         });
@@ -1502,28 +1757,6 @@ function generateKodeLaporan($pdo) {
         setupImagePreview('fotoSebelum', 'previewSebelum');
         setupImagePreview('fotoSesudah', 'previewSesudah');
         
-        // Set default time to now if empty
-        const jamMulaiInput = document.querySelector('input[name="jam_mulai"]');
-        const jamSelesaiInput = document.querySelector('input[name="jam_selesai"]');
-        
-        function getCurrentTime() {
-            const now = new Date();
-            const hours = now.getHours().toString().padStart(2, '0');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            return `${hours}:${minutes}`;
-        }
-        
-        if (jamMulaiInput && !jamMulaiInput.value) {
-            jamMulaiInput.value = getCurrentTime();
-            
-            // Set jam selesai to 1 hour later
-            const now = new Date();
-            now.setHours(now.getHours() + 1);
-            const endHours = now.getHours().toString().padStart(2, '0');
-            const endMinutes = now.getMinutes().toString().padStart(2, '0');
-            jamSelesaiInput.value = `${endHours}:${endMinutes}`;
-        }
-        
         // Form validation
         const form = document.getElementById('reportForm');
         form.addEventListener('submit', function(e) {
@@ -1604,6 +1837,24 @@ function generateKodeLaporan($pdo) {
             
             return true;
         });
+        
+        // Auto-select first available jadwal if only one
+        const jadwalRadios = document.querySelectorAll('.jadwal-radio');
+        if (jadwalRadios.length === 1) {
+            jadwalRadios[0].checked = true;
+            // Trigger change event untuk menampilkan station selector jika ada
+            setTimeout(() => {
+                jadwalRadios[0].dispatchEvent(new Event('change'));
+            }, 100);
+        }
+        
+        // Jika ada jadwal yang sudah terpilih dari reload form, trigger change
+        const selectedJadwal = document.querySelector('input[name="jadwal_id"]:checked');
+        if (selectedJadwal) {
+            setTimeout(() => {
+                selectedJadwal.dispatchEvent(new Event('change'));
+            }, 200);
+        }
     });
     </script>
 </body>

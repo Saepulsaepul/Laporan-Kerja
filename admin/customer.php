@@ -346,6 +346,7 @@ require_once $header_path;
     }
     .customer-info {
         padding: 1.5rem;
+
     }
     .customer-actions {
         padding: 1rem 1.5rem;

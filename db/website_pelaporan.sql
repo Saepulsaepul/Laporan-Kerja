@@ -201,7 +201,7 @@ ALTER TABLE `users`
 --
 -- AUTO_INCREMENT untuk tabel yang dibuang
 --
-
+ALTER TABLE jadwal ADD COLUMN google_maps_url VARCHAR(500) DEFAULT NULL AFTER lokasi;
 --
 -- AUTO_INCREMENT untuk tabel `admin_users`
 --

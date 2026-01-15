@@ -65,20 +65,19 @@ CREATE TABLE services (
   deskripsi TEXT,
   durasi_menit INT,
   harga DECIMAL(12,2),
-  kategori ENUM('Residential', 'Commercial', 'Industrial') DEFAULT 'Residential',
   status ENUM('Aktif', 'Nonaktif') DEFAULT 'Aktif',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
-INSERT INTO services (kode_service, nama_service, deskripsi, durasi_menit, harga, kategori) VALUES
-('FOG-001', 'Fogging Nyamuk', 'Pengasapan area outdoor/indoor untuk pengendalian nyamuk dan serangga terbang', 60, 350000.00, 'Residential'),
-('FUM-001', 'Fumigasi Gudang', 'Pengendalian hama gudang komprehensif untuk area penyimpanan', 180, 1500000.00, 'Industrial'),
-('SPR-001', 'Penyemprotan Rumah', 'Insektisida aman residensial untuk indoor treatment', 45, 200000.00, 'Residential'),
-('ROD-001', 'Rodent Control', 'Pengendalian tikus dan rodent lainnya dengan sistem monitoring', 90, 750000.00, 'Commercial'),
-('TER-001', 'Termite Control', 'Pengendalian rayap dengan sistem baiting dan chemical barrier', 120, 1200000.00, 'Commercial'),
-('SAN-001', 'Sanitasi Area', 'Pembersihan dan sanitasi area dari kontaminasi hama', 120, 800000.00, 'Commercial');
+INSERT INTO services (kode_service, nama_service, deskripsi, durasi_menit, harga) VALUES
+('FOG-001', 'Fogging Nyamuk', 'Pengasapan area outdoor/indoor untuk pengendalian nyamuk dan serangga terbang', 60, 350000.00),
+('FUM-001', 'Fumigasi Gudang', 'Pengendalian hama gudang komprehensif untuk area penyimpanan', 180, 1500000.00),
+('SPR-001', 'Penyemprotan Rumah', 'Insektisida aman residensial untuk indoor treatment', 45, 200000.00),
+('ROD-001', 'Rodent Control', 'Pengendalian tikus dan rodent lainnya dengan sistem monitoring', 90, 750000.00),
+('TER-001', 'Termite Control', 'Pengendalian rayap dengan sistem baiting dan chemical barrier', 120, 1200000.00),
+('SAN-001', 'Sanitasi Area', 'Pembersihan dan sanitasi area dari kontaminasi hama', 120, 800000.00);
 
 -- ============================================
 -- TABEL: customers (DENGAN STATION INSPEKSI)
@@ -278,6 +277,7 @@ CREATE TABLE jadwal (
   tanggal DATE NOT NULL,
   jam TIME NOT NULL,
   lokasi TEXT,
+  google_maps_url VARCHAR(500) DEFAULT NULL,
   durasi_estimasi INT,
   
   -- Status dan prioritas

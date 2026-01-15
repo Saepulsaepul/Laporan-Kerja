@@ -396,8 +396,6 @@ require_once 'includes/navbar.php';
                                         <label for="report_type" class="form-label">Tipe Laporan</label>
                                         <select class="form-select" id="report_type" name="report_type">
                                             <option value="all">Semua Laporan</option>
-                                            <option value="with_photo">Laporan dengan Foto</option>
-                                            <option value="without_photo">Laporan tanpa Foto</option>
                                             <option value="today_only">Hari Ini Saja</option>
                                             <option value="by_schedule">Berdasarkan Jadwal</option>
                                             <option value="high_priority">Prioritas Tinggi/Darurat</option>

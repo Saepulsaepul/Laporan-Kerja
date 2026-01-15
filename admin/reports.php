@@ -750,7 +750,7 @@ require_once 'includes/navbar.php';
                                                     $total_station_customer
                                                 ); ?>
                                             </div>
-                                            <div class="text-end">
+                                            <!-- <div class="text-end">
                                                 <small class="text-muted">Progress</small><br>
                                                 <strong><?php echo $station_selesai; ?>/<?php echo $total_station_customer; ?></strong>
                                             </div>
@@ -765,7 +765,7 @@ require_once 'includes/navbar.php';
                                                 <div class="progress-bar progress-bar-station" role="progressbar" 
                                                      style="width: <?php echo $station_progress; ?>%"></div>
                                             </div>
-                                        </div>
+                                        </div> -->
                                         <?php endif; ?>
                                     </div>
                                     <?php endif; ?>
@@ -1024,7 +1024,7 @@ require_once 'includes/navbar.php';
                                                             <tr><td><strong>Lokasi</strong></td><td><?php echo safe_html($report['station_lokasi'] ?? 'N/A'); ?></td></tr>
                                                         </table>
                                                     </div>
-                                                    <div class="col-md-6">
+                                                    <!-- <div class="col-md-6">
                                                         <div class="text-center">
                                                             <h5>Progress Station</h5>
                                                             <div class="display-4 fw-bold"><?php echo $station_selesai; ?>/<?php echo $total_station_customer; ?></div>
@@ -1038,7 +1038,7 @@ require_once 'includes/navbar.php';
                                                             <small class="text-muted mt-2">Station terakhir: #<?php echo $report['station_terakhir']; ?></small>
                                                             <?php endif; ?>
                                                         </div>
-                                                    </div>
+                                                    </div> -->
                                                 </div>
                                             </div>
                                         </div>
@@ -1080,9 +1080,9 @@ require_once 'includes/navbar.php';
                                                             <?php if (!empty($report['nomor_kunjungan'])): ?>
                                                             <tr><td><strong>Kunjungan ke</strong></td><td>#<?php echo $report['nomor_kunjungan']; ?></td></tr>
                                                             <?php endif; ?>
-                                                            <?php if ($rating > 0): ?>
+                                                            <!-- <?php if ($rating > 0): ?>
                                                             <tr><td><strong>Rating</strong></td><td><div class="rating-stars"><?php echo $stars; ?></div></td></tr>
-                                                            <?php endif; ?>
+                                                            <?php endif; ?> -->
                                                         </table>
                                                     </div>
                                                 </div>
@@ -1275,6 +1275,23 @@ function printModalContent(index) {
         <head>
             <title>Laporan Pest Control - Station Inspection</title>
             <style>
+            .signature {
+    margin-top: 40px;
+    width: 100%;
+}
+
+.signature-box {
+    width: 35%;
+    float: right;
+    text-align: center;
+}
+
+.signature-name {
+    margin-top: 60px;
+    font-weight: bold;
+    text-decoration: underline;
+}
+
                 body { font-family: Arial, sans-serif; line-height: 1.6; font-size: 12px; }
                 .print-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
                 .print-header h1 { margin: 0; color: #333; font-size: 18px; }
@@ -1300,13 +1317,42 @@ function printModalContent(index) {
             </style>
         </head>
         <body>
-            <div class="print-header">
-                <h1>LAPORAN PEKERJAAN PEST CONTROL - STATION INSPECTION</h1>
-                <div class="subtitle">Dicetak pada: ${new Date().toLocaleDateString('id-ID')} ${new Date().toLocaleTimeString('id-ID')}</div>
-            </div>
+           <div class="print-header">
+    <table width="100%" style="border-collapse: collapse;">
+        <tr>
+            <td width="15%" style="text-align:left;">
+                <img src="../assets/img/hama.png" style="width:80px;">
+            </td>
+            <td width="85%" style="text-align:left;">
+                <h1 style="margin:0;">PT. REXON MITRA PRIMA</h1>
+                <div style="font-size:13px;font-weight:bold;">
+                    JASA PEMBASMI HAMA PROFESIONAL
+                </div>
+                <div class="subtitle">
+                    Komplek Perumahan Salaka Nagara Ruko Nomor 3, Balaraja, Tangerang - Banten 15610<br>
+                    Telp: 0812-3456-7890 | Email: info@rexonpestcontrol.com
+                </div>
+            </td>
+        </tr>
+    </table>
+</div>
             
             ${modalContent.replace(/<button[^>]*>.*?<\/button>/g, '')}
-            
+            <div class="signature">
+    <div class="signature-box">
+        Tangerang, Kamis, 15 Januari 2026<br>
+        Mengetahui,<br>
+        <strong>Pegawai Teknisi</strong>
+
+        <div class="signature-name">
+            ................
+        </div>
+        <div style="font-size:11px;">
+        </div>
+    </div>
+    <div style="clear:both;"></div>
+</div>
+
             <div class="print-footer">
                 Dokumen ini dicetak dari sistem Pest Control Management<br>
                 © <?php echo date('Y'); ?> PT. Pest Control Indonesia
@@ -1316,7 +1362,7 @@ function printModalContent(index) {
     `;
     
     // Open print window
-    const printWindow = window.open('', '_blank', 'width=800,height=600');
+    const printWindow  = window.open('', '_blank', 'width=800,height=600');
     printWindow.document.write(printContent);
     printWindow.document.close();
     

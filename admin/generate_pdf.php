@@ -417,7 +417,7 @@ if ($action === 'excel') {
 
 // 1. Inisialisasi dan Konfigurasi Dasar TCPDF
 try {
-    $pdf = new TCPDF('P', 'mm', 'A4', true, 'UTF-8', false); // 'P' untuk Portrait, 'A4'
+    $pdf = new TCPDF('L', 'mm', 'A4', true, 'UTF-8', false); // 'L' untuk Landscape, 'A4'
 } catch (Exception $e) {
     die("Error inisialisasi TCPDF: " . $e->getMessage());
 }
@@ -454,7 +454,7 @@ $pdf->SetXY(45, 21);
 $pdf->Cell(0, 5, 'Komplek Perumahan Salaka Nagara Ruko Nomor 3, Balaraja, Tangerang - Banten 15610', 0, 1, 'L');
 $pdf->SetXY(45, 26);
 $pdf->Cell(0, 5, 'Telp: 0812-3456-7890 | Email: info@rexonpestcontrol.com', 0, 1, 'L');
-$pdf->Line(15, 32, 195, 32); // Garis pemisah (A4 width = 210mm, margin 15mm)
+$pdf->Line(15, 32, 282, 32); // Garis pemisah (A4 width = 210mm, margin 15mm)
 $pdf->Ln(8);
 
 // 3. JUDUL LAPORAN DAN INFORMASI FILTER
@@ -655,7 +655,7 @@ if (!empty($reportsByService)) {
                 }
                 
                 // Garis pemisah antar laporan
-                $pdf->Line(15, $pdf->GetY(), 195, $pdf->GetY());
+                $pdf->Line(15, $pdf->GetY(), 282, $pdf->GetY());
                 $pdf->Ln(5);
                 
                 // Jika sudah di akhir halaman, tambah halaman baru
@@ -823,12 +823,12 @@ if (!empty($reportsByService)) {
     $pdf->Cell(0, 10, 'RINGKASAN AKHIR', 0, 1, 'C', true);
     $pdf->SetFont('helvetica', '', 10);
     
-    $summary = "Total Laporan: " . $total_laporan . " pekerjaan\n" .
-               "Jenis Layanan: " . $service_count . " jenis layanan berbeda\n" .
-               "Laporan Prioritas Tinggi: " . $report_counts['high_priority'] . " pekerjaan";
+    // $summary = "Total Laporan: " . $total_laporan . " pekerjaan\n" .
+    //            "Jenis Layanan: " . $service_count . " jenis layanan berbeda\n" .
+    //            "Laporan Prioritas Tinggi: " . $report_counts['high_priority'] . " pekerjaan";
     
-    $pdf->MultiCell(0, 8, $summary, 0, 'C', false);
-    $pdf->Ln(10);
+    // $pdf->MultiCell(0, 8, $summary, 0, 'C', false);
+    // $pdf->Ln(10);
     
 } else {
     $pdf->SetFont('helvetica', 'I', 10);
@@ -843,18 +843,18 @@ if ($pdf->GetY() > ($pdf->getPageHeight() - 50)) {
 
 $pdf->Ln(10);
 $pdf->SetFont('helvetica', '', 10);
-$pdf->SetX(120);
+$pdf->SetX(215);
 $pdf->Cell(0, 5, 'Tangerang, ' . formatTanggalIndonesia(date('Y-m-d')), 0, 1, 'L');
-$pdf->SetX(120);
+$pdf->SetX(215);
 $pdf->Cell(0, 5, 'Mengetahui,', 0, 1, 'L');
-$pdf->SetX(120);
+$pdf->SetX(215);
 $pdf->Cell(0, 5, 'Manager Operasional', 0, 1, 'L');
 $pdf->Ln(15); 
-$pdf->SetX(120);
+$pdf->SetX(215);
 $pdf->SetFont('helvetica', 'BU', 10);
-$pdf->Cell(0, 5, 'Saepul', 0, 1, 'L');
+$pdf->Cell(0, 5, 'Agung Gunawan', 0, 1, 'L');
 $pdf->SetFont('helvetica', '', 9);
-$pdf->SetX(120);
+$pdf->SetX(215);
 $pdf->Cell(0, 5, 'NIK: 1234567890', 0, 1, 'L');
 
 // 5. Footer Hak Cipta
