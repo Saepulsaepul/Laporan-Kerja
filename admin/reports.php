@@ -326,201 +326,199 @@ require_once 'includes/header.php';
 ?>
 
 <style>
-    .report-card {
-        background-color: #fff;
-        border: 1px solid #e9ecef;
-        border-radius: 12px;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.05);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        margin-bottom: 20px;
-    }
-    .report-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
-    }
-    .report-header {
-        padding: 1rem 1.25rem;
-        border-bottom: 1px solid #e9ecef;
-        background-color: #f8f9fa;
-        border-top-left-radius: 12px;
-        border-top-right-radius: 12px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .report-body {
-        padding: 1.25rem;
-    }
-    .report-footer {
-        padding: 1rem 1.25rem;
-        border-top: 1px solid #e9ecef;
-        background-color: #f8f9fa;
-        border-bottom-left-radius: 12px;
-        border-bottom-right-radius: 12px;
-    }
-    .info-item {
-        display: flex;
-        align-items: flex-start;
-        margin-bottom: 0.75rem;
-    }
-    .info-item i {
-        color: #6c757d;
-        width: 20px;
-        margin-top: 3px;
-        margin-right: 10px;
-        text-align: center;
-    }
-    .report-keterangan {
-        background-color: #f8f9fa;
-        border-left: 4px solid #0d6efd;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        line-height: 1.6;
-    }
-    .empty-state-container {
-        background-color: #f8f9fa;
-        padding: 4rem;
-        border-radius: 12px;
-        border: 1px dashed #dee2e6;
-        text-align: center;
-    }
-    .filter-card {
-        background-color: #fff;
-        border: 1px solid #e9ecef;
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 2rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    .stats-card {
-        background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
-        color: white;
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 2rem;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
-    .photo-preview {
-        max-width: 200px;
-        max-height: 150px;
-        border-radius: 8px;
-        border: 2px solid #e9ecef;
-        cursor: pointer;
-        transition: transform 0.2s ease;
-        margin: 5px;
-        object-fit: cover;
-    }
-    .photo-preview:hover {
-        transform: scale(1.05);
-    }
-    .badge-date {
-        background-color: #e7f1ff;
-        color: #0d6efd;
-        font-size: 0.85rem;
-        padding: 0.3rem 0.7rem;
-        border-radius: 50px;
-    }
-    .service-badge {
-        background-color: #d1ecf1;
-        color: #0c5460;
-        font-size: 0.85rem;
-        padding: 0.3rem 0.7rem;
-        border-radius: 50px;
-    }
-    .station-badge {
-        background-color: #fff3cd;
-        color: #856404;
-        font-size: 0.75rem;
-        padding: 0.2rem 0.5rem;
-        border-radius: 4px;
-        display: inline-block;
-    }
-    .company-badge {
-        background-color: #e7f5ff;
-        color: #0c63e4;
-        font-size: 0.75rem;
-        padding: 0.2rem 0.5rem;
-        border-radius: 4px;
-        display: inline-block;
-        margin-top: 3px;
-    }
-    .photo-gallery {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-top: 10px;
-    }
-    .photo-item {
-        text-align: center;
-    }
-    .photo-label {
-        font-size: 0.75rem;
-        color: #6c757d;
-        margin-top: 3px;
-    }
-    .rating-stars {
-        color: #ffc107;
-        font-size: 1.2rem;
-    }
-    .modal-photo {
-        max-height: 70vh;
-        width: auto;
-        margin: 0 auto;
-        display: block;
-    }
-    .timeline-info {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        padding: 0.75rem;
-        border-radius: 8px;
-        margin-top: 10px;
-    }
-    .timeline-item {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 5px;
-        font-size: 0.9rem;
-    }
-    .text-truncate-2 {
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        word-break: break-word;
-    }
-    .btn-delete-report {
-        position: relative;
-        overflow: hidden;
-    }
-    .btn-delete-report:hover {
-        background-color: #dc3545 !important;
-        border-color: #dc3545 !important;
-        color: white !important;
-    }
-    .station-progress {
-        background-color: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 8px;
-        padding: 0.5rem;
-        margin-top: 0.5rem;
-    }
-    .progress-bar-station {
-        height: 8px;
-        border-radius: 4px;
-        background-color: #20c997;
-    }
-    .station-info-box {
-        background-color: #e7f5ff;
-        border-left: 4px solid #0d6efd;
-        padding: 0.75rem;
-        border-radius: 6px;
-        margin: 0.5rem 0;
-    }
+.report-card {
+    background-color: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.05);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    margin-bottom: 20px;
+}
+.report-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+.report-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e9ecef;
+    background-color: #f8f9fa;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.report-body {
+    padding: 1.25rem;
+}
+.report-footer {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid #e9ecef;
+    background-color: #f8f9fa;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+.info-item {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+}
+.info-item i {
+    color: #6c757d;
+    width: 20px;
+    margin-top: 3px;
+    margin-right: 10px;
+    text-align: center;
+}
+.report-keterangan {
+    background-color: #f8f9fa;
+    border-left: 4px solid #0d6efd;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    line-height: 1.6;
+}
+.empty-state-container {
+    background-color: #f8f9fa;
+    padding: 4rem;
+    border-radius: 12px;
+    border: 1px dashed #dee2e6;
+    text-align: center;
+}
+.filter-card {
+    background-color: #fff;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+.stats-card {
+    background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+.photo-preview {
+    max-width: 200px;
+    max-height: 150px;
+    border-radius: 8px;
+    border: 2px solid #e9ecef;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    margin: 5px;
+    object-fit: cover;
+}
+.photo-preview:hover {
+    transform: scale(1.05);
+}
+.badge-date {
+    background-color: #e7f1ff;
+    color: #0d6efd;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 50px;
+}
+.service-badge {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    font-size: 0.85rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 50px;
+}
+.station-badge {
+    background-color: #fff3cd;
+    color: #856404;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    display: inline-block;
+}
+.company-badge {
+    background-color: #e7f5ff;
+    color: #0c63e4;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    display: inline-block;
+    margin-top: 3px;
+}
+.photo-gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 10px;
+}
+.photo-item {
+    text-align: center;
+}
+.photo-label {
+    font-size: 0.75rem;
+    color: #6c757d;
+    margin-top: 3px;
+}
+.rating-stars {
+    color: #ffc107;
+    font-size: 1.2rem;
+}
+.modal-photo {
+    max-height: 70vh;
+    width: auto;
+    margin: 0 auto;
+    display: block;
+}
+.timeline-info {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    padding: 0.75rem;
+    border-radius: 8px;
+    margin-top: 10px;
+}
+.timeline-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+}
+.text-truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+.btn-delete-report {
+    position: relative;
+    overflow: hidden;
+}
+.btn-delete-report:hover {
+    background-color: #dc3545 !important;
+    border-color: #dc3545 !important;
+    color: white !important;
+}
+.station-progress {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 0.5rem;
+    margin-top: 0.5rem;
+}
+.progress-bar-station {
+    height: 8px;
+    border-radius: 4px;
+    background-color: #20c997;
+}
+.station-info-box {
+    background-color: #e7f5ff;
+    border-left: 4px solid #0d6efd;
+    padding: 0.75rem;
+    border-radius: 6px;
+    margin: 0.5rem 0;
+}
 </style>
 
-<?php
-require_once 'includes/navbar.php';
-?>
+<?php require_once 'includes/navbar.php'; ?>
 
 <div class="container-fluid">
     <div class="row">
@@ -540,6 +538,7 @@ require_once 'includes/navbar.php';
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
             <?php endif; ?>
+            
             <?php if ($error): ?>
             <div class="alert alert-danger alert-dismissible fade show" role="alert">
                 <i class="fas fa-exclamation-triangle me-2"></i><?php echo safe_html($error); ?>
@@ -711,8 +710,6 @@ require_once 'includes/navbar.php';
                         $total_station_customer = $report['total_station_customer'] ?? 0;
                         $station_selesai = $report['total_station_selesai'] ?? 0;
                         $station_progress = $total_station_customer > 0 ? round(($station_selesai / $total_station_customer) * 100) : 0;
-                        
-                        
                 ?>
                         <div class="col-lg-6 mb-4">
                             <div class="report-card">
@@ -750,23 +747,7 @@ require_once 'includes/navbar.php';
                                                     $total_station_customer
                                                 ); ?>
                                             </div>
-                                            <!-- <div class="text-end">
-                                                <small class="text-muted">Progress</small><br>
-                                                <strong><?php echo $station_selesai; ?>/<?php echo $total_station_customer; ?></strong>
-                                            </div>
                                         </div>
-                                        <?php if ($total_station_customer > 0): ?>
-                                        <div class="station-progress mt-2">
-                                            <div class="d-flex justify-content-between mb-1">
-                                                <small>Station Selesai</small>
-                                                <small><?php echo $station_progress; ?>%</small>
-                                            </div>
-                                            <div class="progress" style="height: 8px;">
-                                                <div class="progress-bar progress-bar-station" role="progressbar" 
-                                                     style="width: <?php echo $station_progress; ?>%"></div>
-                                            </div>
-                                        </div> -->
-                                        <?php endif; ?>
                                     </div>
                                     <?php endif; ?>
                                     
@@ -1024,21 +1005,6 @@ require_once 'includes/navbar.php';
                                                             <tr><td><strong>Lokasi</strong></td><td><?php echo safe_html($report['station_lokasi'] ?? 'N/A'); ?></td></tr>
                                                         </table>
                                                     </div>
-                                                    <!-- <div class="col-md-6">
-                                                        <div class="text-center">
-                                                            <h5>Progress Station</h5>
-                                                            <div class="display-4 fw-bold"><?php echo $station_selesai; ?>/<?php echo $total_station_customer; ?></div>
-                                                            <div class="progress mt-2" style="height: 20px;">
-                                                                <div class="progress-bar bg-success" role="progressbar" 
-                                                                     style="width: <?php echo $station_progress; ?>%">
-                                                                    <?php echo $station_progress; ?>%
-                                                                </div>
-                                                            </div>
-                                                            <?php if (!empty($report['station_terakhir'])): ?>
-                                                            <small class="text-muted mt-2">Station terakhir: #<?php echo $report['station_terakhir']; ?></small>
-                                                            <?php endif; ?>
-                                                        </div>
-                                                    </div> -->
                                                 </div>
                                             </div>
                                         </div>
@@ -1080,9 +1046,6 @@ require_once 'includes/navbar.php';
                                                             <?php if (!empty($report['nomor_kunjungan'])): ?>
                                                             <tr><td><strong>Kunjungan ke</strong></td><td>#<?php echo $report['nomor_kunjungan']; ?></td></tr>
                                                             <?php endif; ?>
-                                                            <!-- <?php if ($rating > 0): ?>
-                                                            <tr><td><strong>Rating</strong></td><td><div class="rating-stars"><?php echo $stars; ?></div></td></tr>
-                                                            <?php endif; ?> -->
                                                         </table>
                                                     </div>
                                                 </div>
@@ -1258,115 +1221,283 @@ function confirmDeleteReport() {
 }
 
 function printModalContent(index) {
-    // Store original body content and classes
-    const originalContent = document.body.innerHTML;
-    const originalClasses = document.body.className;
-    
-    // Get modal content
     const modalElement = document.getElementById('detailModal' + index);
+    
     if (!modalElement) return;
+    
+    const modalBody = modalElement.querySelector('.modal-body');
+    const pekerjaTables = modalBody.querySelectorAll('table');
+    let pekerjaName = '';
+    let pekerjaJabatan = '';
+    let pekerjaTelepon = '';
+    
+    if (pekerjaTables.length > 0) {
+        const rows = pekerjaTables[0].querySelectorAll('tr');
+        if (rows.length >= 1) {
+            const nameRow = rows[0];
+            const nameCell = nameRow.querySelectorAll('td')[1];
+            if (nameCell) pekerjaName = nameCell.textContent.trim();
+        }
+        if (rows.length >= 3) {
+            const jabatanRow = rows[2];
+            const jabatanCell = jabatanRow.querySelectorAll('td')[1];
+            if (jabatanCell) pekerjaJabatan = jabatanCell.textContent.trim();
+        }
+        if (rows.length >= 4) {
+            const teleponRow = rows[3];
+            const teleponCell = teleponRow.querySelectorAll('td')[1];
+            if (teleponCell) pekerjaTelepon = teleponCell.textContent.trim();
+        }
+    }
+    
+    if (!pekerjaName) {
+        const namaElements = modalBody.querySelectorAll('strong');
+        for (let el of namaElements) {
+            if (el.textContent.includes('Nama') && el.nextSibling) {
+                pekerjaName = el.nextSibling.textContent.trim();
+                break;
+            }
+        }
+    }
+    
+    const today = new Date();
+    const tanggalIndo = today.toLocaleDateString('id-ID', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
     
     const modalContent = modalElement.querySelector('.modal-content').innerHTML;
     
-    // Create printable content
     const printContent = `
         <!DOCTYPE html>
         <html>
         <head>
             <title>Laporan Pest Control - Station Inspection</title>
             <style>
-            .signature {
-    margin-top: 40px;
-    width: 100%;
-}
-
-.signature-box {
-    width: 35%;
-    float: right;
-    text-align: center;
-}
-
-.signature-name {
-    margin-top: 60px;
-    font-weight: bold;
-    text-decoration: underline;
-}
-
-                body { font-family: Arial, sans-serif; line-height: 1.6; font-size: 12px; }
-                .print-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
-                .print-header h1 { margin: 0; color: #333; font-size: 18px; }
-                .print-header .subtitle { color: #666; font-size: 12px; }
-                .section { margin-bottom: 15px; page-break-inside: avoid; }
-                .section-title { background: #f5f5f5; padding: 6px; border-left: 4px solid #007bff; margin-bottom: 8px; font-size: 14px; }
-                .table-responsive { overflow-x: auto; }
-                table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 11px; }
-                th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
-                th { background-color: #f2f2f2; }
-                .station-box { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin-bottom: 15px; border-radius: 5px; }
-                .station-progress { margin-top: 5px; }
-                .progress { height: 10px; }
-                .photos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
-                .photo-item { text-align: center; }
-                .photo-item img { max-width: 100%; height: auto; }
-                .print-footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #ddd; text-align: center; font-size: 10px; color: #666; }
+                body { 
+                    font-family: 'Times New Roman', Times, serif; 
+                    line-height: 1.5; 
+                    font-size: 12px; 
+                    margin: 0;
+                    padding: 20px;
+                }
+                
+                .print-container {
+                    max-width: 21cm;
+                    margin: 0 auto;
+                }
+                
+                .print-header { 
+                    text-align: center; 
+                    margin-bottom: 25px; 
+                    padding-bottom: 10px; 
+                    border-bottom: 2px solid #000;
+                }
+                
+                .print-header h1 { 
+                    margin: 5px 0; 
+                    color: #333; 
+                    font-size: 18px;
+                    letter-spacing: 1px;
+                }
+                
+                .print-header .company-name {
+                    font-weight: bold;
+                    font-size: 16px;
+                }
+                
+                .print-header .company-tagline {
+                    color: #666; 
+                    font-size: 12px;
+                    font-style: italic;
+                    margin: 5px 0;
+                }
+                
+                .print-header .company-address {
+                    color: #666;
+                    font-size: 11px;
+                    margin: 5px 0;
+                }
+                
+                .report-title {
+                    text-align: center;
+                    margin: 25px 0;
+                    font-size: 16px;
+                    font-weight: bold;
+                    text-decoration: underline;
+                }
+                
+                .section { 
+                    margin-bottom: 15px; 
+                    page-break-inside: avoid; 
+                }
+                
+                .section-title { 
+                    background: #f5f5f5; 
+                    padding: 6px 10px; 
+                    border-left: 4px solid #007bff; 
+                    margin-bottom: 8px; 
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+                
+                table { 
+                    width: 100%; 
+                    border-collapse: collapse; 
+                    margin-bottom: 10px; 
+                    font-size: 11px; 
+                }
+                
+                th, td { 
+                    border: 1px solid #ddd; 
+                    padding: 6px 8px; 
+                    text-align: left; 
+                    vertical-align: top;
+                }
+                
+                th { 
+                    background-color: #f2f2f2; 
+                    font-weight: bold;
+                }
+                
+                .signature-section {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 60px;
+                    
+                }
+                
+                .signature-container {
+                    display: flex;
+                    justify-content: space-between;
+                    margin-top: 80px;
+                }
+                
+                .signature-box {
+                    width: 100%;
+                    text-align: center;
+                    margin-top: 100px;
+                }
+                
+                .signature-place {
+                    font-size: 11px;
+                    color: #666;
+                    margin-bottom: 60px;
+                }
+                
+                .signature-line {
+                    width: 300px;
+                    border-bottom: 1px solid #000;
+                    margin: 0 auto;
+                    text-align: center;
+                    padding-top: 80px;
+                    margin-bottom: 5px;
+                }
+                
+                .signature-name {
+                    font-weight: bold;
+                    font-size: 14px;
+                    margin-top: 5px;
+                }
+                
+                .signature-title {
+                    font-size: 11px;
+                    color: #666;
+                    margin-top: 2px;
+                }
+                
+                .pekerja-info {
+                    text-align: left;
+                    margin: 10px 0;
+                    font-size: 11px;
+                    background: #f9f9f9;
+                    padding: 8px;
+                    border-radius: 4px;
+                    border-left: 3px solid #007bff;
+                }
+                
+                .pekerja-info strong {
+                    display: inline-block;
+                    min-width: 100px;
+                }
+                
                 @media print {
                     .no-print { display: none; }
                     .page-break { page-break-before: always; }
                     @page { margin: 1cm; }
+                    .signature-section { page-break-inside: avoid; }
+                    body { padding: 0; }
                 }
             </style>
         </head>
         <body>
-           <div class="print-header">
-    <table width="100%" style="border-collapse: collapse;">
-        <tr>
-            <td width="15%" style="text-align:left;">
-                <img src="../assets/img/hama.png" style="width:80px;">
-            </td>
-            <td width="85%" style="text-align:left;">
-                <h1 style="margin:0;">PT. REXON MITRA PRIMA</h1>
-                <div style="font-size:13px;font-weight:bold;">
-                    JASA PEMBASMI HAMA PROFESIONAL
+            <div class="print-container">
+                <!-- Header -->
+                <div class="print-header">
+                    <table width="100%" style="border-collapse: collapse;">
+                        <tr>
+                            <td width="15%" style="text-align:left; vertical-align: top;">
+                                <img src="../assets/img/hama.png" style="width:80px;">
+                            </td>
+                            <td width="85%" style="text-align:left; vertical-align: top;">
+                                <h1 style="margin:0; font-size: 18px;">PT. REXON MITRA PRIMA</h1>
+                                <div style="font-size:13px;font-weight:bold;">
+                                    JASA PEMBASMI HAMA PROFESIONAL
+                                </div>
+                                <div class="company-address">
+                                    Komplek Perumahan Salaka Nagara Ruko Nomor 3, Balaraja, Tangerang - Banten 15610<br>
+                                    Telp: 0812-3456-7890 | Email: info@rexonpestcontrol.com
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
-                <div class="subtitle">
-                    Komplek Perumahan Salaka Nagara Ruko Nomor 3, Balaraja, Tangerang - Banten 15610<br>
-                    Telp: 0812-3456-7890 | Email: info@rexonpestcontrol.com
+                
+                <!-- Report Title -->
+                <div class="report-title">
+                    LAPORAN HASIL PEKERJAAN PEST CONTROL
                 </div>
-            </td>
-        </tr>
-    </table>
-</div>
-            
-            ${modalContent.replace(/<button[^>]*>.*?<\/button>/g, '')}
-            <div class="signature">
-    <div class="signature-box">
-        Tangerang, Kamis, 15 Januari 2026<br>
-        Mengetahui,<br>
-        <strong>Pegawai Teknisi</strong>
+                
+                <!-- Content from Modal -->
+                ${modalContent.replace(/<button[^>]*>.*?<\/button>/gi, '').replace(/<div class="modal-header[^>]*>[\s\S]*?<\/div>/g, '').replace(/<div class="modal-footer[^>]*>[\s\S]*?<\/div>/g, '')}
+                
+                <!-- Signature Section -->
+                <div class="signature-section">
 
-        <div class="signature-name">
-            ................
+    <div class="signature-box">
+        <div class="signature-place">
+            Tangerang, ${tanggalIndo}
         </div>
-        <div style="font-size:11px;">
+
+        <div class="signature-line">
+            <div class="signature-name">
+                ${pekerjaName || '...........................'}
+            </div>
+        </div>
+
+        <div class="signature-title">
+            TTD. Teknisi Pest Control
         </div>
     </div>
-    <div style="clear:both;"></div>
 </div>
 
-            <div class="print-footer">
-                Dokumen ini dicetak dari sistem Pest Control Management<br>
-                © <?php echo date('Y'); ?> PT. Pest Control Indonesia
+
+                <!-- Footer -->
+                <div class="print-footer" style="margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; text-align: center; font-size: 10px; color: #666;">
+                    Dokumen ini dicetak dari sistem Pest Control Management<br>
+                    © ${new Date().getFullYear()} PT. Rexon Mitra Prima
+                </div>
             </div>
         </body>
         </html>
     `;
     
-    // Open print window
     const printWindow  = window.open('', '_blank', 'width=800,height=600');
     printWindow.document.write(printContent);
     printWindow.document.close();
     
-    // Wait for images to load before printing
     printWindow.onload = function() {
         setTimeout(() => {
             printWindow.print();
@@ -1407,7 +1538,6 @@ document.addEventListener("DOMContentLoaded", function() {
             
             galleryContainer.innerHTML = '';
             
-            // Add photos to gallery
             const photoTypes = [
                 {key: 'sebelum', title: 'Foto Sebelum'},
                 {key: 'sesudah', title: 'Foto Sesudah'},
